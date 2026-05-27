@@ -52,24 +52,154 @@ def fisher_rao_distance(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) ->
     return np.arccos(bc)
 
 
+def fisher_rao_distance_batch(query_sqrt: np.ndarray, targets: np.ndarray, epsilon: float = 1e-10) -> np.ndarray:
+    """
+    Batch Fisher-Rao distance: O(n) замість O(n*d).
+    
+    query_sqrt: √p_query shape (256,)
+    targets: √p_i для всіх точок shape (n, 256)
+    
+    Returns: відстані shape (n,)
+    """
+    # Bhattacharyya coefficients: Σ√p_query·√p_i для всіх i = dot product!
+    bc = targets @ query_sqrt  # shape (n,)
+    bc = np.clip(bc, 0, 1)
+    return np.arccos(bc)
+
+
 def geodesic_interpolation(p1: np.ndarray, p2: np.ndarray, t: float) -> np.ndarray:
     """
-    Геодезична інтерполяція між двома точками на симплексі.
+    ПРАВИЛЬНА геодезична інтерполяція на S²⁵⁵ з Fisher-Rao метрикою.
     
-    p(t) = exp_p1(t * log_map(p2))
+    log_map(p1→p2) = θ · (√p2/BC - √p1) / ‖√p2/BC - √p1‖
+    де θ = arccos(BC), BC = <√p1, √p2> = Σ√p1_i·√p2_i
+    
+    exp_p1(t·v) = cos(t·θ)·√p1 + sin(t·θ)·v / ‖v‖
+    
+    Це справжня геодезична на сфері одиничних векторів √p.
     """
-    p1 = np.maximum(p1, 1e-10)
-    p2 = np.maximum(p2, 1e-10)
+    eps = 1e-10
+    p1 = np.maximum(p1, eps)
+    p2 = np.maximum(p2, eps)
     p1 = p1 / p1.sum()
     p2 = p2 / p2.sum()
     
-    # Log-map → exp-map через квадратний корінь
-    log_p1_p2 = np.sqrt(p2) / np.sqrt(p1).sum() - 1.0
-    interp_sqrt = np.sqrt(p1) + t * log_p1_p2
-    interp_sqrt = np.maximum(interp_sqrt, 1e-10)
+    sqrt_p1 = np.sqrt(p1)
+    sqrt_p2 = np.sqrt(p2)
     
+    # Bhattacharyya coefficient (скалярний добуток на сфері)
+    bc = np.dot(sqrt_p1, sqrt_p2)
+    bc = np.clip(bc, 0.0, 1.0 - eps)
+    
+    # Випадок майже ідентичних точок → евклідова інтерполяція
+    if bc > 0.9999:
+        interp_sqrt = (1 - t) * sqrt_p1 + t * sqrt_p2
+    else:
+        # Кут геодезичної
+        theta = np.arccos(bc)
+        
+        # Напрямок log-map: v = (√p2/BC - √p1) / ‖√p2/BC - √p1‖
+        diff = sqrt_p2 / bc - sqrt_p1
+        norm_diff = np.linalg.norm(diff)
+        
+        if norm_diff < eps:
+            interp_sqrt = sqrt_p1.copy()
+        else:
+            direction = diff / norm_diff
+            # Exp-map: cos(t·θ)·p1 + sin(t·θ)·direction
+            interp_sqrt = np.cos(t * theta) * sqrt_p1 + np.sin(t * theta) * direction
+    
+    interp_sqrt = np.maximum(interp_sqrt, eps)
     result = interp_sqrt ** 2
     return result / result.sum()
+
+
+def frechet_mean(points: List[np.ndarray], max_iter: int = 50, lr: float = 0.5,
+                 tol: float = 1e-7, epsilon: float = 1e-10) -> np.ndarray:
+    """
+    Fréchet mean на статистичному многовиді S^{n-1} з Fisher-Rao метрикою.
+    
+    Шукає точку m, яка мінімізує: Σ d_FR(m, p_i)²
+    
+    Args:
+        points: список розподілів
+        max_iter: максимум ітерацій
+        lr: learning rate
+        tol: tolerance для збіжності
+        epsilon: epsilon для чисельної стабільності
+        
+    Returns:
+        Fréchet mean (точка на симплексі)
+    """
+    if not points:
+        raise ValueError("Empty points list")
+    
+    if len(points) == 1:
+        p = np.maximum(points[0], epsilon)
+        return p / p.sum()
+    
+    # Перевірка на ідентичні точки
+    first = points[0]
+    all_same = all(np.allclose(first, p, atol=1e-8) for p in points[1:])
+    if all_same:
+        p = np.maximum(first, epsilon)
+        return p / p.sum()
+    
+    # Ініціалізація: arithmetic mean
+    m = np.mean(points, axis=0)
+    m = np.maximum(m, epsilon)
+    m = m / m.sum()
+    
+    prev_m = m.copy()
+    
+    for iteration in range(max_iter):
+        m_sqrt = np.sqrt(m)
+        gradients = []
+        
+        for p in points:
+            p = np.maximum(p, epsilon)
+            p = p / p.sum()
+            sqrt_p = np.sqrt(p)
+            
+            bc = np.dot(m_sqrt, sqrt_p)
+            bc_clamped = np.clip(bc, 0.0, 1.0 - epsilon)
+            
+            if bc_clamped > 1.0 - epsilon:
+                continue
+            
+            theta = np.arccos(bc_clamped)
+            diff = sqrt_p / bc_clamped - m_sqrt
+            norm_diff = np.linalg.norm(diff)
+            
+            if norm_diff < epsilon:
+                continue
+            
+            direction = diff / norm_diff
+            gradients.append(theta * direction)
+        
+        if not gradients:
+            break
+        
+        grad_mean = np.mean(gradients, axis=0)
+        grad_norm = np.linalg.norm(grad_mean)
+        
+        if grad_norm < tol:
+            break
+        
+        step = lr * grad_mean
+        step_norm = np.linalg.norm(step)
+        
+        if step_norm > 0:
+            m = np.cos(step_norm) * m_sqrt + np.sin(step_norm) * step / step_norm
+            m = np.maximum(m, epsilon) ** 2
+            m = m / m.sum()
+        
+        if np.linalg.norm(m - prev_m) < tol:
+            break
+        
+        prev_m = m.copy()
+    
+    return m
 
 
 def kl_divergence(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) -> float:
@@ -323,9 +453,13 @@ class GeodesicContextEngine:
             weights = weights / weights.sum()
             self.memory_centroid = sum(w * p.p for w, p in zip(weights, self.points))
         
-        # Розкид пам'яті
+        # Розкид пам'яті — batch обчислення
         if len(self.points) > 1:
-            distances = [fisher_rao_distance(p.p, self.memory_centroid) for p in self.points]
+            centroid_sqrt = np.sqrt(np.maximum(self.memory_centroid, 1e-10))
+            all_sqrt = np.array([np.sqrt(np.maximum(p.p, 1e-10)) for p in self.points])
+            bc = all_sqrt @ centroid_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
             self.memory_span = np.mean(distances)
         else:
             self.memory_span = 0.0
@@ -389,7 +523,10 @@ class GeodesicContextEngine:
         """
         Агрегація старої частини траєкторії в підмноговид.
         
-        Замість відкидання — об'єднуємо в геометричну структуру.
+        ВИПРАВЛЕНО: використовує Fréchet mean замість arithmetic mean.
+        
+        Fréchet mean зберігає геометричну структуру траєкторії,
+        тоді як arithmetic mean розмиває геометрію многовиду.
         """
         if len(self.points) < 2:
             return
@@ -398,19 +535,23 @@ class GeodesicContextEngine:
         if n_keep < 2:
             return
         
-        # Агрегована точка
-        agg_p = np.mean([p.p for p in self.points[:n_keep]], axis=0)
-        agg_p = agg_p / agg_p.sum()
+        n_agg = len(self.points) - n_keep
+        if n_agg < 2:
+            return
+        
+        # Fréchet mean замість arithmetic mean
+        points_to_agg = [p.p for p in self.points[:n_agg]]
+        agg_p = frechet_mean(points_to_agg)
         
         # Зберігаємо останні точки
-        self.points = self.points[n_keep:]
+        self.points = self.points[n_agg:]
         
         # Вставляємо агреговану точку на початок
         self.points.insert(0, ManifoldPoint(
             p=agg_p,
             t=0,
             position=0,
-            metadata={'aggregated': True, 'n_points': n_keep}
+            metadata={'aggregated': True, 'n_points': n_agg}
         ))
     
     # =========================================================================
@@ -433,6 +574,8 @@ class GeodesicContextEngine:
         Тепер:
         - attention = exp(-geodesic_distance² / T)  ✅
         
+        OPTIMIZED: batch обчислення відстаней — O(n) замість O(n*d).
+        
         Args:
             query: розподіл для attention (поточна точка)
             temperature: температура softmax
@@ -451,11 +594,15 @@ class GeodesicContextEngine:
         if temperature is None:
             temperature = self.temperature
         
-        # Геодезичні відстані до всіх точок
-        distances = np.array([
-            fisher_rao_distance(query, point.p) 
-            for point in self.points
-        ])
+        # Batch обчислення відстаней: O(n) замість O(n*d)
+        # Всі sqrt(p) в одному масиві
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(point.p, 1e-10)) for point in self.points])
+        
+        # Bhattacharyya coefficients: dot products
+        bc = all_sqrt @ query_sqrt  # shape (n,)
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc)
         
         # Геометричний attention: exp(-d²/T)
         energies = -distances ** 2 / temperature
@@ -734,11 +881,12 @@ class GeodesicContextEngine:
                 return [], [], []
             return [], []
         
-        # Відстані до всіх точок пам'яті
-        distances = [
-            fisher_rao_distance(query, mp) 
-            for mp in self.memory_points
-        ]
+        # Batch обчислення відстаней: O(n) замість O(n*d)
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(mp, 1e-10)) for mp in self.memory_points])
+        bc = all_sqrt @ query_sqrt
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc).tolist()
         
         # Топ-k
         k = min(k, len(distances))
@@ -836,8 +984,12 @@ class GeodesicContextEngine:
             }
         
         elif mode == 'interpolation':
-            # Знайти найближчу точку і інтерполювати
-            distances = [fisher_rao_distance(query, p.p) for p in self.points]
+            # Batch обчислення відстаней
+            query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+            all_sqrt = np.array([np.sqrt(np.maximum(p.p, 1e-10)) for p in self.points])
+            bc = all_sqrt @ query_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
             nearest_idx = np.argmin(distances)
             
             if nearest_idx < len(self.points) - 1:

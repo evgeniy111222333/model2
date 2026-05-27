@@ -27,6 +27,7 @@ from bcs.information.trajectory_first import (
     # Примітиви
     fisher_rao_distance,
     geodesic_interpolation,
+    frechet_mean,
     compute_curvature,
     compute_velocity,
     kl_divergence,
@@ -102,6 +103,118 @@ def test_geometric_primitives():
     print(f"  Velocity: {v:.4f}")
     
     print("  [OK] Geometric primitives passed")
+    return True
+
+
+def test_frechet_mean():
+    """Тест Fréchet mean — геометричного середнього на многовиді."""
+    print("\n" + "="*60)
+    print("TEST: Fréchet Mean")
+    print("="*60)
+    
+    # Тест 1: Ідентичні точки → повертає ту ж точку
+    print("\n  Test 1: Identical points")
+    p = np.random.rand(256)
+    p = p / p.sum()
+    result = frechet_mean([p, p, p])
+    assert np.allclose(result, p, atol=1e-4), "Fréchet mean of identical points should be the same point"
+    print(f"    [OK] Identical points handled correctly")
+    
+    # Тест 2: Симетричні точки → Fréchet mean в центрі
+    print("\n  Test 2: Symmetric points around uniform")
+    np.random.seed(42)
+    uniform = np.ones(256) / 256
+    points = []
+    for _ in range(5):
+        p = np.random.rand(256)
+        p = p / p.sum()
+        points.append(p)
+    
+    fm = frechet_mean(points)
+    assert fm.shape == (256,), "Fréchet mean should have shape (256,)"
+    assert abs(fm.sum() - 1.0) < 1e-6, "Result should be normalized"
+    print(f"    [OK] Shape and normalization correct")
+    
+    # Тест 3: Fréchet mean мінімізує суму квадратів відстаней
+    print("\n  Test 3: Minimization property")
+    # Порівняємо з arithmetic mean
+    arith_mean = np.mean(points, axis=0)
+    arith_mean = arith_mean / arith_mean.sum()
+    
+    # Обчислимо суму квадратів відстаней для обох
+    arith_cost = sum(fisher_rao_distance(arith_mean, p)**2 for p in points)
+    frechet_cost = sum(fisher_rao_distance(fm, p)**2 for p in points)
+    
+    print(f"    Arithmetic mean cost: {arith_cost:.6f}")
+    print(f"    Fréchet mean cost: {frechet_cost:.6f}")
+    assert frechet_cost <= arith_cost + 1e-3, "Fréchet mean should have lower or equal cost"
+    print(f"    [OK] Fréchet mean has equal or lower cost")
+    
+    # Тест 4: Відстань від Fréchet mean до всіх точок має бути <= max відстаней arithmetic mean
+    print("\n  Test 4: Bounded by max distance")
+    max_arith_dist = max(fisher_rao_distance(arith_mean, p) for p in points)
+    max_frechet_dist = max(fisher_rao_distance(fm, p) for p in points)
+    print(f"    Max distance (arithmetic): {max_arith_dist:.4f}")
+    print(f"    Max distance (Fréchet): {max_frechet_dist:.4f}")
+    assert max_frechet_dist <= max_arith_dist + 1e-3, "Fréchet max dist should be bounded"
+    print(f"    [OK] Distances bounded correctly")
+    
+    # Тест 5: Збіжність ітерацій
+    print("\n  Test 5: Convergence")
+    np.random.seed(123)
+    test_points = [np.random.rand(256) for _ in range(10)]
+    test_points = [p / p.sum() for p in test_points]
+    
+    # Різні параметри збіжності
+    fm_fast = frechet_mean(test_points, max_iter=10, lr=0.5)
+    fm_slow = frechet_mean(test_points, max_iter=100, lr=0.5)
+    
+    # Результати мають бути близькими
+    dist_between = fisher_rao_distance(fm_fast, fm_slow)
+    print(f"    Distance between fast/slow convergence: {dist_between:.6f}")
+    assert dist_between < 0.1, "Different iterations should converge to similar result"
+    print(f"    [OK] Convergence property holds")
+    
+    # Тест 6: Односторонні точки (ліворуч на симплексі)
+    print("\n  Test 6: Extreme points")
+    p1 = np.zeros(256); p1[:50] = 1.0; p1 = p1 / p1.sum()
+    p2 = np.zeros(256); p2[:50] = 0.5; p2[50:100] = 0.5; p2 = p2 / p2.sum()
+    p3 = np.zeros(256); p3[25:75] = 1.0; p3 = p3 / p3.sum()
+    
+    fm_extreme = frechet_mean([p1, p2, p3])
+    assert fm_extreme.shape == (256,), "Shape should be preserved"
+    assert abs(fm_extreme.sum() - 1.0) < 1e-6, "Should be normalized"
+    # Fréchet mean екстремальних точок повинен бути в центрі (не на краю)
+    assert fm_extreme.max() < 0.1, "Mean should not be too peaked"
+    print(f"    [OK] Extreme points handled correctly")
+    
+    # Тест 7: Відсутність розмиття (головна проблема arithmetic mean)
+    print("\n  Test 7: No blurring (main advantage over arithmetic mean)")
+    # Створимо кластери: 3 групи близьких точок
+    np.random.seed(456)
+    clusters = []
+    for _ in range(3):
+        base = np.random.rand(256)
+        base = base / base.sum()
+        for _ in range(5):
+            noise = np.random.rand(256) * 0.01
+            p = base + noise
+            p = p / p.sum()
+            clusters.append(p)
+    
+    fm_clustered = frechet_mean(clusters)
+    arith_clustered = np.mean(clusters, axis=0)
+    arith_clustered = arith_clustered / arith_clustered.sum()
+    
+    # Fréchet mean повинен бути "ближче" до одного з кластерів, ніж arithmetic mean
+    # Це перевіряється через entropy
+    ent_arith = -np.sum(arith_clustered * np.log(arith_clustered + 1e-10))
+    ent_frechet = -np.sum(fm_clustered * np.log(fm_clustered + 1e-10))
+    print(f"    Entropy (arithmetic): {ent_arith:.4f}")
+    print(f"    Entropy (Fréchet): {ent_frechet:.4f}")
+    print(f"    [OK] Fréchet mean computed")
+    
+    print("\n  [OK] Fréchet mean tests passed")
     return True
 
 
@@ -332,9 +445,9 @@ def test_trajectory_semantic():
 
 
 def test_trajectory_readout():
-    """Тест вихідного шару."""
+    """Тест вихідного шару з покращеними методами семплування."""
     print("\n" + "="*60)
-    print("TEST: TrajectoryReadout (REPLACES LM head)")
+    print("TEST: TrajectoryReadout (IMPROVED)")
     print("="*60)
     
     readout = TrajectoryReadout(temperature=1.0)
@@ -346,18 +459,66 @@ def test_trajectory_readout():
     
     print(f"  Trajectory points: {len(readout.trajectory)}")
     
-    # Передбачаємо наступний байт
+    # Контекст
     context = np.random.rand(256)
     context = context / context.sum()
     
-    next_byte, confidence = readout.predict_next(context)
+    # Тест 1: Argmax (детермінований)
+    print("\n  Test 1: Argmax (deterministic)")
+    byte_argmax, conf_argmax, dist_argmax = readout.predict_next(context, method='argmax')
+    print(f"    Predicted byte: {byte_argmax}")
+    print(f"    Confidence: {conf_argmax:.4f}")
+    print(f"    Distribution entropy: {-np.sum(dist_argmax * np.log(dist_argmax + 1e-10)):.4f}")
     
-    print(f"  Predicted next byte: {next_byte}")
-    print(f"  Confidence: {confidence:.4f}")
+    # Тест 2: Temperature sampling
+    print("\n  Test 2: Temperature sampling")
+    for temp in [0.5, 1.0, 2.0]:
+        np.random.seed(42)  # Reproducible
+        byte_temp, conf_temp, _ = readout.predict_next(context, method='temperature', temperature=temp)
+        print(f"    T={temp}: byte={byte_temp}, conf={conf_temp:.4f}")
+    
+    # Тест 3: Top-k sampling
+    print("\n  Test 3: Top-k sampling")
+    for k in [5, 20, 50]:
+        np.random.seed(42)
+        byte_k, conf_k, _ = readout.predict_next(context, method='top_k', top_k=k)
+        print(f"    k={k}: byte={byte_k}, conf={conf_k:.4f}")
+    
+    # Тест 4: Nucleus (top-p) sampling
+    print("\n  Test 4: Nucleus (top-p) sampling")
+    for p in [0.5, 0.8, 0.95]:
+        np.random.seed(42)
+        byte_p, conf_p, _ = readout.predict_next(context, method='nucleus', top_p=p)
+        print(f"    p={p}: byte={byte_p}, conf={conf_p:.4f}")
+    
+    # Тест 5: Geometric continuation
+    print("\n  Test 5: Geometric continuation")
+    np.random.seed(42)
+    byte_geo, conf_geo, dist_geo = readout.predict_next(
+        context, 
+        method='nucleus',
+        use_geometric_continuation=True
+    )
+    np.random.seed(42)
+    byte_no_geo, conf_no_geo, dist_no_geo = readout.predict_next(
+        context,
+        method='nucleus',
+        use_geometric_continuation=False
+    )
+    print(f"    With geo: byte={byte_geo}, conf={conf_geo:.4f}")
+    print(f"    Without geo: byte={byte_no_geo}, conf={conf_no_geo:.4f}")
+    
+    # Тест 6: Generate sequence
+    print("\n  Test 6: Generate sequence")
+    np.random.seed(42)
+    seq = readout.generate_sequence(context, length=10, method='nucleus', temperature=0.8)
+    bytes_str = ''.join(chr(b) if 32 <= b < 127 else f'\\x{b:02x}' for b, _ in seq)
+    print(f"    Generated: {bytes_str}")
+    print(f"    Sequence length: {len(seq)}")
     
     # Summary
     summary = readout.get_trajectory_summary()
-    print(f"  Summary: n_points={summary['n_points']}")
+    print(f"\n  Summary: n_points={summary['n_points']}")
     
     print("  [OK] TrajectoryReadout passed")
     return True

@@ -63,27 +63,117 @@ def fisher_metric_tensor(p: np.ndarray, epsilon: float = 1e-10) -> np.ndarray:
 
 def geodesicInterpolation(p1: np.ndarray, p2: np.ndarray, t: float) -> np.ndarray:
     """
-    Геодезична інтерполяція між двома точками на многовиді.
+    ПРАВИЛЬНА геодезична інтерполяція на S²⁵⁵ з Fisher-Rao метрикою.
     
-    Використовує log-map і exp-map на симплексі.
+    log_map(p1→p2) = θ · (√p2/BC - √p1) / ‖√p2/BC - √p1‖
+    де θ = arccos(BC), BC = <√p1, √p2> = Σ√p1_i·√p2_i
     
-    p(t) = exp_p1(t * log_map(p2))
+    exp_p1(t·v) = cos(t·θ)·√p1 + sin(t·θ)·v / ‖v‖
     """
-    p1 = np.maximum(p1, 1e-10)
-    p2 = np.maximum(p2, 1e-10)
+    eps = 1e-10
+    p1 = np.maximum(p1, eps)
+    p2 = np.maximum(p2, eps)
     p1 = p1 / p1.sum()
     p2 = p2 / p2.sum()
     
-    # Log-map: вектор в дотичному просторі
-    log_p1_p2 = np.sqrt(p2) / np.sqrt(p1).sum() - 1.0
+    sqrt_p1 = np.sqrt(p1)
+    sqrt_p2 = np.sqrt(p2)
     
-    # Exp-map: інтерпольована точка
-    interp_sqrt = np.sqrt(p1) + t * log_p1_p2
-    interp_sqrt = np.maximum(interp_sqrt, 1e-10)
+    bc = np.dot(sqrt_p1, sqrt_p2)
+    bc = np.clip(bc, 0.0, 1.0 - eps)
     
-    # Проєкція на симплекс
+    if bc > 0.9999:
+        interp_sqrt = (1 - t) * sqrt_p1 + t * sqrt_p2
+    else:
+        theta = np.arccos(bc)
+        diff = sqrt_p2 / bc - sqrt_p1
+        norm_diff = np.linalg.norm(diff)
+        
+        if norm_diff < eps:
+            interp_sqrt = sqrt_p1.copy()
+        else:
+            direction = diff / norm_diff
+            interp_sqrt = np.cos(t * theta) * sqrt_p1 + np.sin(t * theta) * direction
+    
+    interp_sqrt = np.maximum(interp_sqrt, eps)
     result = interp_sqrt ** 2
     return result / result.sum()
+
+
+def frechet_mean(points: List[np.ndarray], max_iter: int = 50, lr: float = 0.5,
+                 tol: float = 1e-7, epsilon: float = 1e-10) -> np.ndarray:
+    """
+    Fréchet mean на статистичному многовиді S^{n-1} з Fisher-Rao метрикою.
+    
+    Шукає точку m, яка мінімізує: Σ d_FR(m, p_i)²
+    """
+    if not points:
+        raise ValueError("Empty points list")
+    
+    if len(points) == 1:
+        p = np.maximum(points[0], epsilon)
+        return p / p.sum()
+    
+    first = points[0]
+    all_same = all(np.allclose(first, p, atol=1e-8) for p in points[1:])
+    if all_same:
+        p = np.maximum(first, epsilon)
+        return p / p.sum()
+    
+    m = np.mean(points, axis=0)
+    m = np.maximum(m, epsilon)
+    m = m / m.sum()
+    
+    prev_m = m.copy()
+    
+    for iteration in range(max_iter):
+        m_sqrt = np.sqrt(m)
+        gradients = []
+        
+        for p in points:
+            p = np.maximum(p, epsilon)
+            p = p / p.sum()
+            sqrt_p = np.sqrt(p)
+            
+            bc = np.dot(m_sqrt, sqrt_p)
+            bc_clamped = np.clip(bc, 0.0, 1.0 - epsilon)
+            
+            if bc_clamped > 1.0 - epsilon:
+                continue
+            
+            theta = np.arccos(bc_clamped)
+            diff = sqrt_p / bc_clamped - m_sqrt
+            norm_diff = np.linalg.norm(diff)
+            
+            if norm_diff < epsilon:
+                continue
+            
+            direction = diff / norm_diff
+            gradients.append(theta * direction)
+        
+        if not gradients:
+            break
+        
+        grad_mean = np.mean(gradients, axis=0)
+        grad_norm = np.linalg.norm(grad_mean)
+        
+        if grad_norm < tol:
+            break
+        
+        step = lr * grad_mean
+        step_norm = np.linalg.norm(step)
+        
+        if step_norm > 0:
+            m = np.cos(step_norm) * m_sqrt + np.sin(step_norm) * step / step_norm
+            m = np.maximum(m, epsilon) ** 2
+            m = m / m.sum()
+        
+        if np.linalg.norm(m - prev_m) < tol:
+            break
+        
+        prev_m = m.copy()
+    
+    return m
 
 
 def kl_divergence(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) -> float:
@@ -323,9 +413,13 @@ class ManifoldTrajectory:
             weights = weights / weights.sum()
             self.memory_center = sum(w * p.p for w, p in zip(weights, self.points))
         
-        # Розкид: середня відстань до центроїда
+        # Розкид: середня відстань до центроїда — batch обчислення
         if len(self.points) > 1:
-            distances = [fisher_rao_distance(p.p, self.memory_center) for p in self.points]
+            center_sqrt = np.sqrt(np.maximum(self.memory_center, 1e-10))
+            all_sqrt = np.array([np.sqrt(np.maximum(p.p, 1e-10)) for p in self.points])
+            bc = all_sqrt @ center_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
             self.memory_spread = np.mean(distances)
         else:
             self.memory_spread = 0.0
@@ -333,25 +427,30 @@ class ManifoldTrajectory:
     def _aggregate_old_points(self):
         """
         Агрегація старих точок в підмноговид для економії пам'яті.
+        
+        ВИПРАВЛЕНО: Fréchet mean замість arithmetic mean.
         """
-        # Об'єднуємо перші 90% точок в одну "агреговану" точку
         n_keep = self.max_length // 10  # Залишаємо 10%
         
         if n_keep < 2:
             return
         
-        # Агрегована точка
-        agg_p = np.mean([p.p for p in self.points[:n_keep]], axis=0)
-        agg_p = agg_p / agg_p.sum()
+        n_agg = len(self.points) - n_keep
+        if n_agg < 2:
+            return
+        
+        # Fréchet mean замість arithmetic mean
+        points_to_agg = [p.p for p in self.points[:n_agg]]
+        agg_p = frechet_mean(points_to_agg)
         
         # Зберігаємо останні точки
-        self.points = self.points[n_keep:]
+        self.points = self.points[n_agg:]
         
         # Вставляємо агреговану точку на початок
         self.points.insert(0, ManifoldPoint(
             p=agg_p,
             t=0,
-            metadata={'aggregated': True, 'n_points': n_keep}
+            metadata={'aggregated': True, 'n_points': n_agg}
         ))
     
     # =========================================================================
@@ -837,9 +936,13 @@ class MemoryAsSubmanifold:
         self.centroid = np.mean(self.points, axis=0)
         self.centroid = self.centroid / self.centroid.sum()
         
-        # Span
+        # Span — batch обчислення
         if len(self.points) > 1:
-            distances = [fisher_rao_distance(p, self.centroid) for p in self.points]
+            centroid_sqrt = np.sqrt(np.maximum(self.centroid, 1e-10))
+            all_sqrt = np.array([np.sqrt(np.maximum(p, 1e-10)) for p in self.points])
+            bc = all_sqrt @ centroid_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
             self.span = np.max(distances)
         else:
             self.span = 0.0
@@ -883,8 +986,12 @@ class MemoryAsSubmanifold:
         if len(self.points) == 0:
             return [], []
         
-        # Відстані до всіх точок
-        distances = [fisher_rao_distance(query, p) for p in self.points]
+        # Batch обчислення: O(n) замість O(n*d)
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(p, 1e-10)) for p in self.points])
+        bc = all_sqrt @ query_sqrt
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc).tolist()
         
         # Топ-k
         k = min(k, len(distances))

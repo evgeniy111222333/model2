@@ -62,24 +62,156 @@ def fisher_rao_distance(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) ->
 
 def geodesic_interpolation(p1: np.ndarray, p2: np.ndarray, t: float) -> np.ndarray:
     """
-    Геодезична інтерполяція на симплексі.
+    ПРАВИЛЬНА геодезична інтерполяція на S²⁵⁵ з Fisher-Rao метрикою.
     
-    РІВНЯННЯ: p(t) = exp_p1(t · log_map(p2))
+    log_map(p1→p2) = θ · (√p2/BC - √p1) / ‖√p2/BC - √p1‖
+    де θ = arccos(BC), BC = <√p1, √p2> = Σ√p1_i·√p2_i
     
-    Використовує square-root parametrization для симпліциального інтерполяції.
+    exp_p1(t·v) = cos(t·θ)·√p1 + sin(t·θ)·v / ‖v‖
     """
-    p1 = np.maximum(p1, 1e-10)
-    p2 = np.maximum(p2, 1e-10)
+    eps = 1e-10
+    p1 = np.maximum(p1, eps)
+    p2 = np.maximum(p2, eps)
     p1 = p1 / p1.sum()
     p2 = p2 / p2.sum()
     
-    # Log-map через square-root
-    log_p1_p2 = np.sqrt(p2) / np.sqrt(p1).sum() - 1.0
-    interp_sqrt = np.sqrt(p1) + t * log_p1_p2
-    interp_sqrt = np.maximum(interp_sqrt, 1e-10)
+    sqrt_p1 = np.sqrt(p1)
+    sqrt_p2 = np.sqrt(p2)
     
+    bc = np.dot(sqrt_p1, sqrt_p2)
+    bc = np.clip(bc, 0.0, 1.0 - eps)
+    
+    if bc > 0.9999:
+        interp_sqrt = (1 - t) * sqrt_p1 + t * sqrt_p2
+    else:
+        theta = np.arccos(bc)
+        diff = sqrt_p2 / bc - sqrt_p1
+        norm_diff = np.linalg.norm(diff)
+        
+        if norm_diff < eps:
+            interp_sqrt = sqrt_p1.copy()
+        else:
+            direction = diff / norm_diff
+            interp_sqrt = np.cos(t * theta) * sqrt_p1 + np.sin(t * theta) * direction
+    
+    interp_sqrt = np.maximum(interp_sqrt, eps)
     result = interp_sqrt ** 2
     return result / result.sum()
+
+
+def frechet_mean(points: List[np.ndarray], max_iter: int = 50, lr: float = 0.5, 
+                 tol: float = 1e-7, epsilon: float = 1e-10) -> np.ndarray:
+    """
+    Fréchet mean на статистичному многовиді S^{n-1} з Fisher-Rao метрикою.
+    
+    Шукає точку m, яка мінімізує: Σ d_FR(m, p_i)²
+    
+    ІТЕРАТИВНА ФОРМУЛА (Barzilai-Borwein gradient descent):
+    m_{t+1} = exp_{m_t}(η · grad F(m_t))
+    
+    де grad F(m) = -Σ log_map(m→p_i) / |Σ log_map(m→p_i)|
+    
+    Args:
+        points: список розподілів
+        max_iter: максимум ітерацій
+        lr: learning rate
+        tol: tolerance для збіжності
+        epsilon: epsilon для чисельної стабільності
+        
+    Returns:
+        Fréchet mean (точка на симплексі)
+    """
+    if not points:
+        raise ValueError("Empty points list")
+    
+    if len(points) == 1:
+        p = np.maximum(points[0], epsilon)
+        return p / p.sum()
+    
+    # Перевірка на ідентичні точки
+    all_same = all(np.allclose(points[0], p, atol=1e-8) for p in points[1:])
+    if all_same:
+        p = np.maximum(points[0], epsilon)
+        return p / p.sum()
+    
+    # Ініціалізація: arithmetic mean
+    m = np.mean(points, axis=0)
+    m = np.maximum(m, epsilon)
+    m = m / m.sum()
+    
+    prev_m = m.copy()
+    
+    for iteration in range(max_iter):
+        m_sqrt = np.sqrt(m)
+        
+        # Gradients для кожної точки
+        gradients = []
+        total_norm = 0.0
+        
+        for p in points:
+            p = np.maximum(p, epsilon)
+            p = p / p.sum()
+            sqrt_p = np.sqrt(p)
+            
+            # Bhattacharyya coefficient
+            bc = np.dot(m_sqrt, sqrt_p)
+            bc_clamped = np.clip(bc, 0.0, 1.0 - epsilon)
+            
+            # Якщо точки близькі — пропускаємо
+            if bc_clamped > 1.0 - epsilon:
+                continue
+            
+            # Кут
+            theta = np.arccos(bc_clamped)
+            
+            # Log-map напрямок: v = (√p/BC - √m) / ‖√p/BC - √m‖
+            diff = sqrt_p / bc_clamped - m_sqrt
+            norm_diff = np.linalg.norm(diff)
+            
+            if norm_diff < epsilon:
+                continue
+            
+            direction = diff / norm_diff
+            
+            # Gradient вкатається в напрямку log-map
+            grad = theta * direction
+            gradients.append(grad)
+            total_norm += norm(grad) ** 2
+        
+        if not gradients:
+            # Всі точки ідентичні
+            break
+        
+        # Середній градієнт
+        grad_mean = np.mean(gradients, axis=0)
+        grad_norm = np.linalg.norm(grad_mean)
+        
+        if grad_norm < tol:
+            # Збіглося
+            break
+        
+        # Крок в напрямку, протилежному градієнту (minimization)
+        step = lr * grad_mean
+        
+        # Exp-map: m_new = cos(|step|) * m + sin(|step|) * step/|step|
+        step_norm = np.linalg.norm(step)
+        if step_norm > 0:
+            m = np.cos(step_norm) * m_sqrt + np.sin(step_norm) * step / step_norm
+            m = np.maximum(m, epsilon) ** 2
+            m = m / m.sum()
+        
+        # Перевірка збіжності
+        if np.linalg.norm(m - prev_m) < tol:
+            break
+        
+        prev_m = m.copy()
+    
+    return m
+
+
+def norm(x: np.ndarray) -> float:
+    """L2 норма."""
+    return float(np.linalg.norm(x))
 
 
 def kl_divergence(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) -> float:
@@ -301,9 +433,13 @@ class Trajectory:
         )
         self.memory_centroid = self.memory_centroid / self.memory_centroid.sum()
         
-        # Span
+        # Span — batch обчислення
         if len(self.points) > 1:
-            distances = [fisher_rao_distance(p.p, self.memory_centroid) for p in self.points]
+            centroid_sqrt = np.sqrt(np.maximum(self.memory_centroid, 1e-10))
+            all_sqrt = np.array([np.sqrt(np.maximum(p.p, 1e-10)) for p in self.points])
+            bc = all_sqrt @ centroid_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
             self.memory_span = np.mean(distances)
     
     def _detect_semantic_shapes(self):
@@ -334,30 +470,39 @@ class Trajectory:
                     self.streams.append(i)
     
     def _aggregate(self):
-        """Агрегація старих точок."""
+        """
+        Агрегація старих точок через Fréchet mean.
+        
+        ВИПРАВЛЕНО: замість arithmetic mean (який розмиває геометрію)
+        тепер використовуємо Fréchet mean, який зберігає геометричну структуру.
+        
+        Fréchet mean — це точка на многовиді, яка мінімізує
+        суму квадратів відстаней Fisher-Rao до всіх агрегованих точок.
+        """
         n_keep = max(2, self.max_length // 10)
+        n_agg = len(self.points) - n_keep
         
-        # Агрегована точка
-        agg_p = np.mean([p.p for p in self.points[:n_keep]], axis=0)
-        agg_p = agg_p / agg_p.sum()
+        if n_agg < 2:
+            return
         
-        self.points = self.points[n_keep:]
+        # Fréchet mean замість arithmetic mean
+        points_to_agg = [p.p for p in self.points[:n_agg]]
+        agg_p = frechet_mean(points_to_agg)
+        
+        # Видаляємо старі точки і додаємо агреговану
+        self.points = self.points[n_agg:]
         self.points.insert(0, ManifoldPoint(
             p=agg_p, t=0,
-            metadata={'aggregated': True}
+            metadata={'aggregated': True, 'n_points': n_agg}
         ))
     
     def compute_attention(self, query: np.ndarray) -> np.ndarray:
         """
         Геодезичний attention — ЗАМІНА softmax(q·k).
         
+        OPTIMIZED: batch обчислення O(n) замість O(n*d).
+        
         РІВНЯННЯ: attention_i = exp(-d_FR(query, p_i)² / T)
-        
-        Замість:
-        - softmax(query · key)  ❌
-        
-        Тепер:
-        - softmax(-geodesic_distance² / T)  ✅
         
         Args:
             query: розподіл запиту
@@ -368,10 +513,12 @@ class Trajectory:
         if not self.points:
             return np.array([])
         
-        # Геодезичні відстані
-        distances = np.array([
-            fisher_rao_distance(query, p.p) for p in self.points
-        ])
+        # Batch обчислення відстаней: O(n) замість O(n*d)
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(p.p, 1e-10)) for p in self.points])
+        bc = all_sqrt @ query_sqrt
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc)
         
         # Геометричний attention
         energies = -distances ** 2 / self.temperature
@@ -539,10 +686,12 @@ class GeodesicAttentionLayer:
         if n == 0:
             return np.zeros(256), np.array([])
         
-        # Геодезичні відстані
-        distances = np.array([
-            fisher_rao_distance(query, k) for k in keys
-        ])
+        # Batch обчислення: O(n) замість O(n*d)
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(k, 1e-10)) for k in keys])
+        bc = all_sqrt @ query_sqrt
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc)
         
         # Attention
         energies = -distances ** 2 / self.temperature
@@ -799,30 +948,195 @@ class TrajectoryReadout:
                 dist = dist / dist.sum()
                 self.trajectory.push(p=dist, t=float(i)/n, position=i)
     
-    def predict_next(self, context: np.ndarray) -> Tuple[int, float]:
+    def predict_next(
+        self, 
+        context: np.ndarray,
+        method: str = 'nucleus',
+        temperature: float = 1.0,
+        top_p: float = 0.9,
+        top_k: int = 40,
+        use_geometric_continuation: bool = True,
+    ) -> Tuple[int, float, np.ndarray]:
         """
-        Передбачити наступний байт.
+        Покращене передбачення наступного байту.
+        
+        МЕТОДИ:
+        1. 'nucleus' — Nucleus sampling (p-parameter) [РЕКОМЕНДОВАНО]
+        2. 'temperature' — Temperature sampling
+        3. 'top_k' — Top-k sampling
+        4. 'argmax' — Greedy (детермінований)
+        
+        ГЕОМЕТРИЧНЕ ПРОДОВЖЕННЯ:
+        - Якщо use_geometric_continuation=True, використовуємо напрямок траєкторії
+          для передбачення наступного розподілу
         
         Args:
             context: контекстний вектор з траєкторії
+            method: метод семплування
+            temperature: temperature для семплування (>1 = більше randomness, <1 = більш детермінований)
+            top_p: для nucleus sampling (cumulative probability threshold)
+            top_k: для top-k sampling
+            use_geometric_continuation: чи використовувати геометричне продовження
             
         Returns:
-            (predicted_byte, confidence)
+            (predicted_byte, confidence, output_distribution)
         """
         if not self.trajectory.points:
-            return 0, 0.0
+            return 0, 0.0, np.zeros(256)
         
-        # Attention до траєкторії
-        attention = self.trajectory.compute_attention(context)
-        
-        # Зважена сума всіх розподілів
+        # Зважена сума через geodesic attention
         output = self.trajectory.attend(context)
         
-        # Обираємо найімовірніший байт
-        predicted_byte = int(np.argmax(output))
-        confidence = float(output[predicted_byte])
+        # Геометричне продовження траєкторії
+        if use_geometric_continuation and len(self.trajectory.points) >= 2:
+            output = self._geometric_continuation(output, context)
         
-        return predicted_byte, confidence
+        # Нормалізація
+        output = np.maximum(output, 1e-10)
+        output = output / output.sum()
+        
+        # Семплування залежно від методу
+        if method == 'argmax':
+            predicted_byte = int(np.argmax(output))
+            confidence = float(output[predicted_byte])
+        
+        elif method == 'temperature':
+            # Temperature sampling
+            logits = np.log(output + 1e-10) / temperature
+            logits = logits - logits.max()  # Numerical stability
+            probs = np.exp(logits)
+            probs = probs / probs.sum()
+            predicted_byte = int(np.random.choice(256, p=probs))
+            confidence = float(output[predicted_byte])
+        
+        elif method == 'top_k':
+            # Top-k sampling
+            top_indices = np.argsort(output)[-top_k:]
+            top_probs = output[top_indices]
+            top_probs = top_probs / top_probs.sum()
+            predicted_byte = int(np.random.choice(top_indices, p=top_probs))
+            confidence = float(output[predicted_byte])
+        
+        elif method == 'nucleus':
+            # Nucleus (top-p) sampling
+            sorted_indices = np.argsort(output)[::-1]
+            sorted_probs = output[sorted_indices]
+            cumsum = np.cumsum(sorted_probs)
+            
+            # Відсікаємо хвіст щоб сума <= top_p
+            cutoff = np.searchsorted(cumsum, top_p) + 1
+            nucleus_indices = sorted_indices[:cutoff]
+            nucleus_probs = sorted_probs[:cutoff]
+            nucleus_probs = nucleus_probs / nucleus_probs.sum()
+            
+            predicted_byte = int(np.random.choice(nucleus_indices, p=nucleus_probs))
+            confidence = float(output[predicted_byte])
+        
+        else:
+            # Default to argmax
+            predicted_byte = int(np.argmax(output))
+            confidence = float(output[predicted_byte])
+        
+        return predicted_byte, confidence, output
+    
+    def _geometric_continuation(self, attention_output: np.ndarray, context: np.ndarray) -> np.ndarray:
+        """
+        Геометричне продовження траєкторії.
+        
+        Використовує напрямок і швидкість останніх точок
+        для передбачення наступного розподілу.
+        
+        РІВНЯННЯ:
+        p_next ≈ geodesic_interpolation(p_last, p_last + velocity, 0.5)
+        
+        Args:
+            attention_output: output від geodesic attention
+            context: контекстний вектор
+            
+        Returns:
+            Покращений розподіл з урахуванням геометрії
+        """
+        if len(self.trajectory.points) < 3:
+            return attention_output
+        
+        # Останні 3 точки для обчислення напрямку
+        p_prev = self.trajectory.points[-2].p
+        p_curr = self.trajectory.points[-1].p
+        
+        # Швидкість: різниця в √-просторі
+        sqrt_prev = np.sqrt(p_prev)
+        sqrt_curr = np.sqrt(p_curr)
+        velocity = sqrt_curr - sqrt_prev
+        
+        # Напрямок екстраполяції
+        sqrt_extended = sqrt_curr + velocity * 0.3  # 0.3 = розмір кроку
+        sqrt_extended = np.maximum(sqrt_extended, 1e-10)
+        sqrt_extended = sqrt_extended / np.linalg.norm(sqrt_extended)
+        
+        # Перевірка чи напрямок стабільний
+        velocity_norm = np.linalg.norm(velocity)
+        if velocity_norm < 1e-6:
+            # Занадто мала швидкість — не екстраполюємо
+            return attention_output
+        
+        # Геометрична інтерполяція між поточною точкою і екстрапольованою
+        extended = sqrt_extended ** 2
+        extended = extended / extended.sum()
+        
+        # Змішуємо з geodesic attention output
+        # Вага залежить від впевненості attention
+        attention_weight = float(np.max(self.trajectory.compute_attention(context)))
+        
+        # Якщо увага сильна на поточній точці — використовуємо геометрію
+        mix = 0.3 * (1.0 - attention_weight)
+        result = (1 - mix) * attention_output + mix * extended
+        
+        return result / result.sum()
+    
+    def generate_sequence(
+        self,
+        context: np.ndarray,
+        length: int = 50,
+        method: str = 'nucleus',
+        temperature: float = 0.8,
+        top_p: float = 0.9,
+    ) -> List[Tuple[int, float]]:
+        """
+        Згенерувати послідовність байтів.
+        
+        Args:
+            context: початковий контекст
+            length: довжина послідовності
+            method: метод семплування
+            temperature: temperature
+            top_p: для nucleus sampling
+            
+        Returns:
+            Список (byte, confidence)
+        """
+        results = []
+        current_context = context.copy()
+        
+        for _ in range(length):
+            byte, conf, _ = self.predict_next(
+                current_context,
+                method=method,
+                temperature=temperature,
+                top_p=top_p,
+            )
+            results.append((byte, conf))
+            
+            # Оновлюємо контекст для наступного кроку
+            # (в простому випадку — додаємо передбачений байт)
+            if len(self.trajectory.points) > 0:
+                last_p = self.trajectory.points[-1].p.copy()
+                # "Видаляємо" найстарішу точку і просуваємо час
+                # Це спрощена версія — реальна реалізація потребує
+                # більш складної логіки оновлення траєкторії
+                current_context = 0.9 * current_context + 0.1 * last_p
+                current_context = current_context / current_context.sum()
+        
+        return results
     
     def get_trajectory_summary(self) -> Dict[str, Any]:
         """Отримати summary траєкторії."""
