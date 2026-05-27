@@ -1,0 +1,7 @@
+{
+    "test_id": 18,
+    "test_name": "Field: Feed Rate F_base Dynamics",
+    "description": "Evaluate field activation levels (u_mean) under higher feed rate F_base",
+    "success": true,
+    "u_mean": 0.6228160858154297
+}

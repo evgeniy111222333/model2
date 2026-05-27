@@ -1,0 +1,7 @@
+{
+    "test_id": 77,
+    "test_name": "Memory: Crystallized Decay rate",
+    "description": "Check decay rate parameters of the crystallized memory bank",
+    "success": true,
+    "tau_decay": 5000000.0
+}

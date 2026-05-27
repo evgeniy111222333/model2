@@ -1,0 +1,1056 @@
+{
+    "passed": 99,
+    "total": 100,
+    "pass_rate": 99.0,
+    "duration_seconds": 174.24933981895447,
+    "results": [
+        {
+            "test_id": 1,
+            "test_name": "Modality: Plain Text ASCII (English)",
+            "description": "Check if English ASCII plaintext is detected with high confidence as text_ascii",
+            "success": true,
+            "detected_modality": "text_ascii",
+            "posteriors": {
+                "text_ascii": 1.0,
+                "text_utf8": 1.573621544433031e-256,
+                "image": 3.0596753648837318e-201,
+                "audio": 6.062313315378815e-133,
+                "binary": 0.0,
+                "structured": 2.0685578910271185e-259
+            },
+            "entropy": 4.434650252549855,
+            "duration_seconds": 2.9081716537475586
+        },
+        {
+            "test_id": 2,
+            "test_name": "Modality: Plain Text UTF-8 (Ukrainian)",
+            "description": "Check if Ukrainian UTF-8 text is detected as text_utf8 or similar",
+            "success": true,
+            "detected_modality": "text_utf8",
+            "entropy": 3.9533506491740655,
+            "duration_seconds": 1.790952205657959
+        },
+        {
+            "test_id": 3,
+            "test_name": "Modality: HTML Markup",
+            "description": "Check modality classification and boundary dynamics for HTML markup streams",
+            "success": true,
+            "detected_modality": "text_ascii",
+            "boundary_count": 24,
+            "duration_seconds": 1.4069972038269043
+        },
+        {
+            "test_id": 4,
+            "test_name": "Modality: JSON Structural Brackets",
+            "description": "Verify modality detection on structural JSON code with brackets and colons",
+            "success": true,
+            "detected_modality": "text_ascii",
+            "unique_bytes": 31,
+            "duration_seconds": 1.0945394039154053
+        },
+        {
+            "test_id": 5,
+            "test_name": "Modality: Sparse Binary Data",
+            "description": "Ensure high null ratio data is correctly identified as sparse_binary or binary",
+            "success": true,
+            "detected_modality": "binary",
+            "null_ratio": 0.9433962264150944,
+            "duration_seconds": 1.567199945449829
+        },
+        {
+            "test_id": 6,
+            "test_name": "Modality: Dense Binary Data",
+            "description": "Check high entropy uniform random bytes detection",
+            "success": false,
+            "detected_modality": "binary",
+            "entropy": 2.7389856208088226,
+            "duration_seconds": 9.734255313873291
+        },
+        {
+            "test_id": 7,
+            "test_name": "Modality: Sinusoidal Audio Waveform",
+            "description": "Examine modality detection on structured numerical audio sine wave representations",
+            "success": true,
+            "detected_modality": "image",
+            "unique_bytes": 244,
+            "duration_seconds": 1.4972152709960938
+        },
+        {
+            "test_id": 8,
+            "test_name": "Modality: 2D Image Gradient",
+            "description": "Examine modality detection on flattened 2D spatial gradients",
+            "success": true,
+            "detected_modality": "image",
+            "unique_bytes": 16,
+            "duration_seconds": 1.3234834671020508
+        },
+        {
+            "test_id": 9,
+            "test_name": "Modality: Mixed Executable Data",
+            "description": "Evaluate modality detection on mixed instruction codes and ASCII strings",
+            "success": true,
+            "detected_modality": "text_utf8",
+            "duration_seconds": 1.151421308517456
+        },
+        {
+            "test_id": 10,
+            "test_name": "Modality: Detection Speed & Volume",
+            "description": "Measure speed and scaling of modality classification on varying data sizes",
+            "success": true,
+            "detected_modality": "text_ascii",
+            "length": 10000,
+            "duration_seconds": 29.646387100219727
+        },
+        {
+            "test_id": 11,
+            "test_name": "Field: Stability Under Empty Input",
+            "description": "Verify that empty inputs do not crash the field and leave statistics finite",
+            "success": true,
+            "empty_input": true,
+            "error_msg": "Shape of array too small to calculate a numerical gradient, at least (edge_order + 1) elements are required.",
+            "duration_seconds": 0.00762486457824707
+        },
+        {
+            "test_id": 12,
+            "test_name": "Field: Uniform Repeated Byte",
+            "description": "Ensure u and Phi converge to stable, low variance fields on uniform input",
+            "success": true,
+            "u_std": 8.42936920264492e-09,
+            "phi_std": 0.1949862688779831,
+            "duration_seconds": 0.9415435791015625
+        },
+        {
+            "test_id": 13,
+            "test_name": "Field: Stability Under White Noise",
+            "description": "Check that the field does not explode under high-amplitude white noise",
+            "success": true,
+            "u_mean": 0.45451098680496216,
+            "phi_mean": -0.4726329743862152,
+            "duration_seconds": 8.196439504623413
+        },
+        {
+            "test_id": 14,
+            "test_name": "Field: dt Time-Step Scaling Sensitivity",
+            "description": "Check how time-step changes (dt=0.3 vs default) affect stability",
+            "success": true,
+            "u_mean": 0.40561774373054504,
+            "phi_mean": -0.4969867467880249,
+            "duration_seconds": 0.7207190990447998
+        },
+        {
+            "test_id": 15,
+            "test_name": "Field: Double-Well Potential Bifurcation",
+            "description": "Verify that Phi field develops spatial bimodal (double-well) pattern separation",
+            "success": true,
+            "phi_min": -0.6102749109268188,
+            "phi_max": 0.6044376492500305,
+            "has_bimodal": true,
+            "duration_seconds": 1.1630511283874512
+        },
+        {
+            "test_id": 16,
+            "test_name": "Field: Diffusion constant D_u Sensitivity",
+            "description": "Analyze spatial variance under high diffusion constant D_u",
+            "success": true,
+            "u_std": 0.0,
+            "phi_std": 0.011261004954576492,
+            "duration_seconds": 0.7661726474761963
+        },
+        {
+            "test_id": 17,
+            "test_name": "Field: Diffusion constant D_v Sensitivity",
+            "description": "Analyze system stability under low D_v diffusion constants",
+            "success": true,
+            "v_std": 0.062006596475839615,
+            "duration_seconds": 0.7569210529327393
+        },
+        {
+            "test_id": 18,
+            "test_name": "Field: Feed Rate F_base Dynamics",
+            "description": "Evaluate field activation levels (u_mean) under higher feed rate F_base",
+            "success": true,
+            "u_mean": 0.6228160858154297,
+            "duration_seconds": 0.7437400817871094
+        },
+        {
+            "test_id": 19,
+            "test_name": "Field: Kill Rate k_base Dynamics",
+            "description": "Check inhibitory suppression levels under high kill rate k_base",
+            "success": true,
+            "u_mean": 0.48066702485084534,
+            "duration_seconds": 0.7433230876922607
+        },
+        {
+            "test_id": 20,
+            "test_name": "Field: Numeric Policy Clipping",
+            "description": "Verify that extreme inputs are bounded by AdaptiveNumericPolicy to prevent overflow",
+            "success": true,
+            "u_max": 0.6255448460578918,
+            "u_min": 0.6255447268486023,
+            "duration_seconds": 1.4825832843780518
+        },
+        {
+            "test_id": 21,
+            "test_name": "Predictive: Constant Input Error Convergence",
+            "description": "Verify that prediction error converges close to zero for static byte sequences",
+            "success": true,
+            "first_error": 3.0585741996765137,
+            "last_error": 5.328513725544326e-05,
+            "convergence_ratio": 1.742156108590692e-05,
+            "duration_seconds": 0.7921288013458252
+        },
+        {
+            "test_id": 22,
+            "test_name": "Predictive: Periodic Convergence",
+            "description": "Examine prediction error reduction on simple repeating multi-byte patterns",
+            "success": true,
+            "min_error": 0.04480822756886482,
+            "max_error": 3.4917635917663574,
+            "final_error": 0.04480822756886482,
+            "duration_seconds": 0.8192825317382812
+        },
+        {
+            "test_id": 23,
+            "test_name": "Predictive: Learning Rate Sensitivity",
+            "description": "Compare learning speed under high prediction error learning rate",
+            "success": true,
+            "loop_count": 34,
+            "final_error": 0.1376044899225235,
+            "duration_seconds": 0.7752285003662109
+        },
+        {
+            "test_id": 24,
+            "test_name": "Predictive: Context Size Sweep",
+            "description": "Verify convergence when prediction error loop is active with standard context",
+            "success": true,
+            "errors": [
+                3.4615206718444824,
+                3.389538049697876,
+                3.28857684135437,
+                3.165026903152466,
+                3.024970531463623
+            ],
+            "duration_seconds": 0.9210281372070312
+        },
+        {
+            "test_id": 25,
+            "test_name": "Predictive: Anomaly Single Byte Flip",
+            "description": "Verify predictive error loop updates correctly with localized modifications",
+            "success": true,
+            "mean_error": 1.9218665957450867,
+            "duration_seconds": 0.7540848255157471
+        },
+        {
+            "test_id": 26,
+            "test_name": "Predictive: Anomaly Byte Insertion",
+            "description": "Check prediction error response under stream expansion anomaly",
+            "success": true,
+            "max_error": 3.7616331577301025,
+            "duration_seconds": 0.7123050689697266
+        },
+        {
+            "test_id": 27,
+            "test_name": "Predictive: Anomaly Byte Deletion",
+            "description": "Check prediction error response under stream contraction anomaly",
+            "success": true,
+            "max_error": 3.7565395832061768,
+            "duration_seconds": 0.6729295253753662
+        },
+        {
+            "test_id": 28,
+            "test_name": "Predictive: Field Correction Rate Sensitivity",
+            "description": "Examine field dynamics adjustment magnitude under prediction feedback loop",
+            "success": true,
+            "max_correction": 4.782710902873077e-07,
+            "mean_correction": 4.169146441935321e-07,
+            "duration_seconds": 0.7746515274047852
+        },
+        {
+            "test_id": 29,
+            "test_name": "Predictive: Hierarchical Alignment",
+            "description": "Ensure hierarchical predictive coding learns without errors on structured data",
+            "success": true,
+            "error_count": 2,
+            "final_hpc_error": 1.756169025450945,
+            "duration_seconds": 0.8045191764831543
+        },
+        {
+            "test_id": 30,
+            "test_name": "Predictive: Complexity Penalty Bounds",
+            "description": "Verify complexity weight bounds in prediction error loop calculations",
+            "success": true,
+            "mean_error": 1.7135367104235817,
+            "duration_seconds": 0.72792649269104
+        },
+        {
+            "test_id": 31,
+            "test_name": "Boundary: Sharp Step Transition",
+            "description": "Verify transition boundary is located near the partition interface (AAAAABBBBB)",
+            "success": true,
+            "boundaries": [
+                118,
+                135,
+                149,
+                166,
+                182
+            ],
+            "has_mid_boundary": true,
+            "duration_seconds": 0.5822014808654785
+        },
+        {
+            "test_id": 32,
+            "test_name": "Boundary: Multiple Sequential Transitions",
+            "description": "Examine section boundary coordinates for multiple contiguous patterns",
+            "success": true,
+            "boundary_count": 10,
+            "boundaries": [
+                68,
+                85,
+                100,
+                116,
+                132,
+                168,
+                185,
+                202,
+                216,
+                232
+            ],
+            "duration_seconds": 0.6692705154418945
+        },
+        {
+            "test_id": 33,
+            "test_name": "Boundary: Noisy Transition Robustness",
+            "description": "Check boundary localization correctness under moderate data corruptions",
+            "success": true,
+            "boundaries": [
+                3,
+                17,
+                53,
+                67,
+                88,
+                101,
+                119,
+                149,
+                159
+            ],
+            "duration_seconds": 0.5150547027587891
+        },
+        {
+            "test_id": 34,
+            "test_name": "Boundary: High-Noise Interface Masking",
+            "description": "Verify boundary detection logic when structured blocks are separated by noise",
+            "success": true,
+            "boundary_count": 14,
+            "boundaries": [
+                80,
+                101,
+                117,
+                135,
+                149,
+                165,
+                183,
+                197,
+                215,
+                237,
+                253,
+                267,
+                281,
+                301
+            ],
+            "duration_seconds": 0.8061268329620361
+        },
+        {
+            "test_id": 35,
+            "test_name": "Boundary: HTML Code Layout Boundaries",
+            "description": "Verify boundaries align with syntactic tags inside markup streams",
+            "success": true,
+            "boundaries": [
+                0,
+                12,
+                92,
+                102
+            ],
+            "duration_seconds": 0.47771692276000977
+        },
+        {
+            "test_id": 36,
+            "test_name": "Boundary: CSV File layout",
+            "description": "Check boundary markers on tabular numerical records separated by newlines",
+            "success": true,
+            "boundary_count": 26,
+            "duration_seconds": 1.2955543994903564
+        },
+        {
+            "test_id": 37,
+            "test_name": "Boundary: Windowed Overlap Contiguity",
+            "description": "Examine boundaries stability when processed using sliding windows with overlaps",
+            "success": true,
+            "boundary_count": 13,
+            "boundaries": [
+                502,
+                601,
+                634,
+                667,
+                700,
+                748,
+                781,
+                814,
+                847,
+                880,
+                913,
+                946,
+                999
+            ],
+            "duration_seconds": 2.0547995567321777
+        },
+        {
+            "test_id": 38,
+            "test_name": "Boundary: Detector Scale Sensitivity",
+            "description": "Verify boundary detection performs correctly on standard scale parameters",
+            "success": true,
+            "boundary_count": 24,
+            "duration_seconds": 0.8206968307495117
+        },
+        {
+            "test_id": 39,
+            "test_name": "Boundary: Minimum Block Length Constraints",
+            "description": "Ensure very short blocks are merged, maintaining contiguous segment size limits",
+            "success": true,
+            "boundaries": [
+                11,
+                21,
+                70,
+                87,
+                102,
+                116
+            ],
+            "duration_seconds": 0.5396647453308105
+        },
+        {
+            "test_id": 40,
+            "test_name": "Boundary: Segment Contiguity Check",
+            "description": "Verify detected boundaries partition the entire input space without overlap gaps",
+            "success": true,
+            "boundary_count": 28,
+            "is_sorted": true,
+            "duration_seconds": 0.8908376693725586
+        },
+        {
+            "test_id": 41,
+            "test_name": "Clustering: Uniform Input Cluster Count",
+            "description": "Verify uniform input stream results in a small, cohesive number of clusters",
+            "success": true,
+            "cluster_count": 16,
+            "duration_seconds": 1.1454427242279053
+        },
+        {
+            "test_id": 42,
+            "test_name": "Clustering: Repeating Patterns Count",
+            "description": "Verify repeating strings form distinct clusters mapping the periodicity",
+            "success": true,
+            "cluster_count": 15,
+            "duration_seconds": 0.7947521209716797
+        },
+        {
+            "test_id": 43,
+            "test_name": "Clustering: Spatial Contiguity Verify",
+            "description": "Verify that individual clusters contain spatially contiguous positions",
+            "success": true,
+            "cluster_count": 16,
+            "spatially_coherent": true,
+            "duration_seconds": 0.8290348052978516
+        },
+        {
+            "test_id": 44,
+            "test_name": "Clustering: Quality Metric Range",
+            "description": "Ensure cluster quality metrics lie within valid [0, 1] interval",
+            "success": true,
+            "cluster_count": 22,
+            "qualities": [
+                0.7222820047142459,
+                0.8019855773118303,
+                0.7425926810561311,
+                0.702353385512792,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7078745816274087,
+                0.70148926067272,
+                0.7071174491154286,
+                0.7218022396011534,
+                0.7658771867151745,
+                0.7785327542009983
+            ],
+            "valid_range": true,
+            "duration_seconds": 0.8591232299804688
+        },
+        {
+            "test_id": 45,
+            "test_name": "Clustering: Noise Quality Scores",
+            "description": "Verify clusters from high-entropy random noise have lower quality scores",
+            "success": true,
+            "cluster_count": 30,
+            "mean_quality": 0.7614498270207335,
+            "duration_seconds": 4.285358667373657
+        },
+        {
+            "test_id": 46,
+            "test_name": "Clustering: Pattern Group Consistency",
+            "description": "Ensure identical patterns separated by noise are assigned same pattern group",
+            "success": true,
+            "cluster_count": 12,
+            "pattern_groups": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                2,
+                1,
+                0,
+                0,
+                0,
+                0
+            ],
+            "duration_seconds": 0.6496603488922119
+        },
+        {
+            "test_id": 47,
+            "test_name": "Clustering: Temperature Scale Effect",
+            "description": "Check clustering behaviour when running at customized temperature scaling",
+            "success": true,
+            "cluster_count": 15,
+            "duration_seconds": 0.8438212871551514
+        },
+        {
+            "test_id": 48,
+            "test_name": "Clustering: Size Constraints",
+            "description": "Verify cluster sizes lie within expected min and max boundaries",
+            "success": true,
+            "sizes": [
+                31,
+                15,
+                24,
+                32,
+                32,
+                32,
+                32,
+                32,
+                32,
+                32,
+                32,
+                24,
+                33,
+                17
+            ],
+            "duration_seconds": 0.965691328048706
+        },
+        {
+            "test_id": 49,
+            "test_name": "Clustering: Embedding Latent Representation",
+            "description": "Verify representations computed for clusters have appropriate dimensionality",
+            "success": true,
+            "emb_dim": 32,
+            "cluster_count": 14,
+            "duration_seconds": 0.7831394672393799
+        },
+        {
+            "test_id": 50,
+            "test_name": "Clustering: Merge Threshold Sweep",
+            "description": "Sweep merge threshold parameter and check cluster outputs",
+            "success": true,
+            "cluster_count": 15,
+            "threshold": 0.3,
+            "duration_seconds": 0.7661538124084473
+        },
+        {
+            "test_id": 51,
+            "test_name": "Variational: ELBO Value Sanity Check",
+            "description": "Verify variational inference calculates finite ELBO values",
+            "success": true,
+            "elbo_count": 4,
+            "elbo_values": [
+                -5.771694660186768,
+                -5.970670223236084,
+                -5.882937908172607,
+                -5.911635398864746
+            ],
+            "all_finite": true,
+            "duration_seconds": 0.8212411403656006
+        },
+        {
+            "test_id": 52,
+            "test_name": "Variational: ELBO Convergence (Predictable Input)",
+            "description": "Check that ELBO converges (becomes less negative) on predictable pattern data",
+            "success": true,
+            "elbo_first": -5.461973667144775,
+            "elbo_last": -5.798892021179199,
+            "duration_seconds": 0.9648594856262207
+        },
+        {
+            "test_id": 53,
+            "test_name": "Variational: ELBO Behavior (Random Data)",
+            "description": "Verify ELBO behaves correctly (remains highly negative) on high entropy data",
+            "success": true,
+            "elbo_mean": -5.6205185651779175,
+            "duration_seconds": 4.140904188156128
+        },
+        {
+            "test_id": 54,
+            "test_name": "Variational: Latent Space Sparsity",
+            "description": "Examine the sparsity pattern of the latent representations",
+            "success": true,
+            "latent_sparsity": 0.0,
+            "latent_shape": [
+                128
+            ],
+            "duration_seconds": 0.9319567680358887
+        },
+        {
+            "test_id": 55,
+            "test_name": "Variational: Reconstruction Decoder Accuracy",
+            "description": "Verify decoding of state reconstructs input distribution features",
+            "success": true,
+            "final_elbo": -5.840268135070801,
+            "duration_seconds": 0.8520126342773438
+        },
+        {
+            "test_id": 56,
+            "test_name": "Variational: Update Frequency Sensitivity",
+            "description": "Check variational step updates execute correctly under training duration",
+            "success": true,
+            "elbo_count": 4,
+            "duration_seconds": 0.8911051750183105
+        },
+        {
+            "test_id": 57,
+            "test_name": "Variational: Learning Rate Stability Sweep",
+            "description": "Ensure variational updates are stable under higher training learning rates",
+            "success": true,
+            "is_stable": true,
+            "duration_seconds": 0.8611760139465332
+        },
+        {
+            "test_id": 58,
+            "test_name": "Variational: Dynamic Observation Feed",
+            "description": "Verify observation updates track Phi field mean values dynamically",
+            "success": true,
+            "elbo_values": [
+                -5.6760101318359375,
+                -5.979603290557861,
+                -5.896383762359619
+            ],
+            "duration_seconds": 0.8073623180389404
+        },
+        {
+            "test_id": 59,
+            "test_name": "Variational: Multi-Level ELBO Distribution",
+            "description": "Compare ELBO convergence characteristics across different levels",
+            "success": true,
+            "levels": 3,
+            "duration_seconds": 0.8066325187683105
+        },
+        {
+            "test_id": 60,
+            "test_name": "Variational: Free Energy vs ELBO correlation",
+            "description": "Check correlation between physical field free energy and variational ELBO",
+            "success": true,
+            "fe_first": 3.465691227598727,
+            "fe_last": 3.4618392767036856,
+            "elbo_first": -5.778522491455078,
+            "elbo_last": -5.834324836730957,
+            "duration_seconds": 0.8227152824401855
+        },
+        {
+            "test_id": 61,
+            "test_name": "IB: Objective Value Computation",
+            "description": "Verify that mutual information bottleneck objective computes finite metrics",
+            "success": true,
+            "levels_computed": [
+                0,
+                1
+            ],
+            "ib_stats": {
+                "0": {
+                    "I_ST": 0.6426363587379456,
+                    "I_TY": 0.0
+                },
+                "1": {
+                    "I_ST": 0.0,
+                    "I_TY": 0.0
+                }
+            },
+            "duration_seconds": 4.244070291519165
+        },
+        {
+            "test_id": 62,
+            "test_name": "IB: Optimal Beta sweep",
+            "description": "Ensure optimal beta parameter selection correctly trades compression for prediction",
+            "success": true,
+            "optimal_betas": [
+                2.1791666666666667,
+                1.0
+            ],
+            "duration_seconds": 4.298041343688965
+        },
+        {
+            "test_id": 63,
+            "test_name": "IB: Information Trade-off Curve",
+            "description": "Check preservation metrics I(T;Y) vs compression metrics I(S;T)",
+            "success": true,
+            "tradeoff": [
+                {
+                    "level": 0,
+                    "compression": 1.107970118522644,
+                    "prediction": 0.0
+                },
+                {
+                    "level": 1,
+                    "compression": 0.0,
+                    "prediction": 0.0
+                }
+            ],
+            "duration_seconds": 4.304159641265869
+        },
+        {
+            "test_id": 64,
+            "test_name": "IB: Clustering Purity Verification",
+            "description": "Verify clustering representation quality via information bottleneck analysis",
+            "success": true,
+            "ib_loss": 0.0,
+            "entropy_t": 0.0,
+            "duration_seconds": 4.290704965591431
+        },
+        {
+            "test_id": 65,
+            "test_name": "IB: GNN Conversion Feature Dimensionality",
+            "description": "Verify compression ratio of conversion levels using graph networks",
+            "success": true,
+            "level_count": 3,
+            "sizes": [
+                19,
+                10,
+                5
+            ],
+            "duration_seconds": 0.745460033416748
+        },
+        {
+            "test_id": 66,
+            "test_name": "IB: GNN vs Default Conversion comparison",
+            "description": "Verify representation features under GNN conversion",
+            "success": true,
+            "level_count": 1,
+            "duration_seconds": 0.7628214359283447
+        },
+        {
+            "test_id": 67,
+            "test_name": "IB: Conversion Depth Hierarchy Limits",
+            "description": "Test information bottleneck optimization under large hierarchy levels",
+            "success": true,
+            "levels_optimized": [
+                0,
+                1
+            ],
+            "duration_seconds": 4.756595611572266
+        },
+        {
+            "test_id": 68,
+            "test_name": "IB: Optimizer Convergence Speed",
+            "description": "Measure execution speed of information bottleneck optimization sweeps",
+            "success": true,
+            "levels_count": 2,
+            "duration_seconds": 4.481267213821411
+        },
+        {
+            "test_id": 69,
+            "test_name": "IB: Parameter Beta Sensitivity",
+            "description": "Verify information bottleneck output when parameter sweeps occur",
+            "success": true,
+            "betas": [
+                2.1791666666666667,
+                1.0
+            ],
+            "duration_seconds": 4.001276731491089
+        },
+        {
+            "test_id": 70,
+            "test_name": "IB: Botttleneck Feature Decoding",
+            "description": "Verify cluster representations can be reconstructed from bottleneck states",
+            "success": true,
+            "has_ib": true,
+            "duration_seconds": 3.9686670303344727
+        },
+        {
+            "test_id": 71,
+            "test_name": "Memory: Working Memory Ring Eviction",
+            "description": "Verify oldest cluster details are evicted when working memory exceeds buffer size",
+            "success": true,
+            "buffer_size": 15,
+            "capacity": 50,
+            "duration_seconds": 0.3374950885772705
+        },
+        {
+            "test_id": 72,
+            "test_name": "Memory: Novelty Score Calculation",
+            "description": "Check that novelty score is computed for working memory insertions",
+            "success": true,
+            "novelties": [
+                0.2708763070704766,
+                0.2703602353382236,
+                0.2707204820809992,
+                0.27072045053861904,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204820809992,
+                0.2707204726032407,
+                0.2707204820809992,
+                0.2707204820809992,
+                0.2707085052071937,
+                0.2695465156483784,
+                0.2705166075277383,
+                0.26913841278488426,
+                0.27065164430724153,
+                0.2707204820809992,
+                0.27072045053861904,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204726032407,
+                0.2707204820809992,
+                0.2707204726032407,
+                0.2707204820809992,
+                0.2707204820809992,
+                0.2707204820809992,
+                0.2705460008007611,
+                0.26246736479533583
+            ],
+            "duration_seconds": 0.7959620952606201
+        },
+        {
+            "test_id": 73,
+            "test_name": "Memory: Working Memory Key Recall",
+            "description": "Verify recall retrieval correctness from short-term working memory cache",
+            "success": true,
+            "context_vector_norm": 0.3535902202129364,
+            "duration_seconds": 0.7579166889190674
+        },
+        {
+            "test_id": 74,
+            "test_name": "Memory: Crystallization Consolidation Sweep",
+            "description": "Test crystallized consolidation count under altered theta thresholds",
+            "success": true,
+            "crystal_count": 1,
+            "duration_seconds": 0.9860808849334717
+        },
+        {
+            "test_id": 75,
+            "test_name": "Memory: High Frequency Consolidation Rate",
+            "description": "Check how fast highly repeated sequences crystallize into memory",
+            "success": true,
+            "crystal_count": 1,
+            "duration_seconds": 1.656566858291626
+        },
+        {
+            "test_id": 76,
+            "test_name": "Memory: Low Frequency Decay",
+            "description": "Verify low frequency patterns do not consolidating and decay over time",
+            "success": true,
+            "crystal_count": 1,
+            "duration_seconds": 0.9726805686950684
+        },
+        {
+            "test_id": 77,
+            "test_name": "Memory: Crystallized Decay rate",
+            "description": "Check decay rate parameters of the crystallized memory bank",
+            "success": true,
+            "tau_decay": 5000000.0,
+            "duration_seconds": 0.7539725303649902
+        },
+        {
+            "test_id": 78,
+            "test_name": "Memory: LSH Index Search Speed",
+            "description": "Compare memory lookup times with LSH indexing enabled",
+            "success": true,
+            "use_lsh": true,
+            "duration_seconds": 0.7260172367095947
+        },
+        {
+            "test_id": 79,
+            "test_name": "Memory: LSH Index Update Correctness",
+            "description": "Verify that adding crystals correctly updates LSH buckets without errors",
+            "success": true,
+            "crystals": 2,
+            "duration_seconds": 0.7509007453918457
+        },
+        {
+            "test_id": 80,
+            "test_name": "Memory: Forgetting step validation",
+            "description": "Verify forgetting steps remove weak crystallized traces",
+            "success": true,
+            "crystal_count": 2,
+            "duration_seconds": 0.7899038791656494
+        },
+        {
+            "test_id": 81,
+            "test_name": "Resonance: Context Vector Calculation",
+            "description": "Check context resonance vector calculation correctness on repeats",
+            "success": true,
+            "resonance_steps": 2,
+            "duration_seconds": 0.8049838542938232
+        },
+        {
+            "test_id": 82,
+            "test_name": "Resonance: Field Injection Stabilization",
+            "description": "Verify that injecting context resonance reduces u and Phi field variance",
+            "success": true,
+            "mean_norm": 0.17174525558948517,
+            "duration_seconds": 0.7501792907714844
+        },
+        {
+            "test_id": 83,
+            "test_name": "Resonance: Sequence Associative SAM Prior",
+            "description": "Ensure sequence memory provides valid predictive priors on fields",
+            "success": true,
+            "prior_confidence": 0.0,
+            "duration_seconds": 0.7517940998077393
+        },
+        {
+            "test_id": 84,
+            "test_name": "Resonance: Sequence SAM Confidence bounds",
+            "description": "Verify sequence SAM confidence metric calculations stay within limits",
+            "success": true,
+            "duration_seconds": 0.7866451740264893
+        },
+        {
+            "test_id": 85,
+            "test_name": "Resonance: Cross-Modal Knowledge Transfer",
+            "description": "Check knowledge transfer alignment mapping between distinct modalities",
+            "success": true,
+            "duration_seconds": 0.7526698112487793
+        },
+        {
+            "test_id": 86,
+            "test_name": "Resonance: Knowledge Transfer Convergence speed",
+            "description": "Examine transfer rate speed when processing mixed streams",
+            "success": true,
+            "duration_seconds": 0.7812087535858154
+        },
+        {
+            "test_id": 87,
+            "test_name": "Resonance: Level Splitting Auto-Catalysis",
+            "description": "Verify level splitting components initialize correctly on hierarchy changes",
+            "success": true,
+            "duration_seconds": 0.7799201011657715
+        },
+        {
+            "test_id": 88,
+            "test_name": "Resonance: Feedback Loop Stability",
+            "description": "Ensure field stays stable over long iterations under context injection",
+            "success": true,
+            "duration_seconds": 1.309152364730835
+        },
+        {
+            "test_id": 89,
+            "test_name": "Resonance: Injection Strength Sweep",
+            "description": "Check field alignment behaviors under context resonance sweeps",
+            "success": true,
+            "duration_seconds": 0.7996759414672852
+        },
+        {
+            "test_id": 90,
+            "test_name": "Resonance: Semantic Latent Dynamics Init",
+            "description": "Ensure semantic latent dynamics execute without crashes",
+            "success": true,
+            "duration_seconds": 0.822890043258667
+        },
+        {
+            "test_id": 91,
+            "test_name": "Optim: Fisher Information Matrix trace",
+            "description": "Check that Fisher Information Matrix calculates positive and finite traces",
+            "success": true,
+            "fisher_trace": 0.8706091642379761,
+            "duration_seconds": 0.7504777908325195
+        },
+        {
+            "test_id": 92,
+            "test_name": "Optim: Fisher Matrix Condition Number",
+            "description": "Verify that the condition number is stable and finite",
+            "success": true,
+            "condition_number": 1250022528.0,
+            "duration_seconds": 0.7461757659912109
+        },
+        {
+            "test_id": 93,
+            "test_name": "Optim: Phase Transition Tc Consistency",
+            "description": "Verify Tc calculations on structured repeating inputs yields consistent values",
+            "success": true,
+            "T_c": 5.080301507537689,
+            "duration_seconds": 1.0131354331970215
+        },
+        {
+            "test_id": 94,
+            "test_name": "Optim: Phase Order Parameter \u03c8 Evolution",
+            "description": "Check \u03c8 field value ranges during spatial self-organization steps",
+            "success": true,
+            "order_parameter": 0.20309340953826904,
+            "duration_seconds": 1.0366036891937256
+        },
+        {
+            "test_id": 95,
+            "test_name": "Optim: Correlation Length \u03be Scaling",
+            "description": "Examine correlation length metric bounds under steady-state configurations",
+            "success": true,
+            "correlation_length": 0.508456826210022,
+            "duration_seconds": 1.0226671695709229
+        },
+        {
+            "test_id": 96,
+            "test_name": "Optim: MultiTimescale updates rate",
+            "description": "Ensure MultiTimescaleOptimizer runs and logs steps without errors",
+            "success": true,
+            "duration_seconds": 0.9689970016479492
+        },
+        {
+            "test_id": 97,
+            "test_name": "Optim: MultiTimescale Learning Rate Adaptation",
+            "description": "Verify learning rate adjustment factors in response to free energy change",
+            "success": true,
+            "duration_seconds": 0.9569199085235596
+        },
+        {
+            "test_id": 98,
+            "test_name": "Optim: CMA-ES Parameter calibration landscape",
+            "description": "Check that CMA-ES updates optimize field parameters correctly",
+            "success": true,
+            "duration_seconds": 0.9772603511810303
+        },
+        {
+            "test_id": 99,
+            "test_name": "Optim: CMA-ES Generation Count convergence",
+            "description": "Check CMA-ES generation counts convergence logic on simple parameters",
+            "success": true,
+            "duration_seconds": 0.9939608573913574
+        },
+        {
+            "test_id": 100,
+            "test_name": "Optim: Semantic Query Readout Init",
+            "description": "Ensure semantic readout layers initialize correctly",
+            "success": true,
+            "duration_seconds": 0.8576738834381104
+        }
+    ]
+}

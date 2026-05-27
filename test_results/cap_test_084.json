@@ -1,0 +1,6 @@
+{
+    "test_id": 84,
+    "test_name": "Resonance: Sequence SAM Confidence bounds",
+    "description": "Verify sequence SAM confidence metric calculations stay within limits",
+    "success": true
+}

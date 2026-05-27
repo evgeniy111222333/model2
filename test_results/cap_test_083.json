@@ -1,0 +1,7 @@
+{
+    "test_id": 83,
+    "test_name": "Resonance: Sequence Associative SAM Prior",
+    "description": "Ensure sequence memory provides valid predictive priors on fields",
+    "success": true,
+    "prior_confidence": 0.0
+}

@@ -1,0 +1,18 @@
+{
+    "test_id": 63,
+    "test_name": "IB: Information Trade-off Curve",
+    "description": "Check preservation metrics I(T;Y) vs compression metrics I(S;T)",
+    "success": true,
+    "tradeoff": [
+        {
+            "level": 0,
+            "compression": 1.107970118522644,
+            "prediction": 0.0
+        },
+        {
+            "level": 1,
+            "compression": 0.0,
+            "prediction": 0.0
+        }
+    ]
+}

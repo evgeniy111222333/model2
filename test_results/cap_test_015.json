@@ -1,0 +1,9 @@
+{
+    "test_id": 15,
+    "test_name": "Field: Double-Well Potential Bifurcation",
+    "description": "Verify that Phi field develops spatial bimodal (double-well) pattern separation",
+    "success": true,
+    "phi_min": -0.6102749109268188,
+    "phi_max": 0.6044376492500305,
+    "has_bimodal": true
+}

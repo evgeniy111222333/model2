@@ -1,0 +1,8 @@
+{
+    "test_id": 5,
+    "test_name": "Modality: Sparse Binary Data",
+    "description": "Ensure high null ratio data is correctly identified as sparse_binary or binary",
+    "success": true,
+    "detected_modality": "binary",
+    "null_ratio": 0.9433962264150944
+}

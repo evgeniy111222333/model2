@@ -1,0 +1,7 @@
+{
+    "test_id": 41,
+    "test_name": "Clustering: Uniform Input Cluster Count",
+    "description": "Verify uniform input stream results in a small, cohesive number of clusters",
+    "success": true,
+    "cluster_count": 0
+}

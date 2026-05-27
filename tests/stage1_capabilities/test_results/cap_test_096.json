@@ -1,0 +1,6 @@
+{
+    "test_id": 96,
+    "test_name": "Optim: MultiTimescale updates rate",
+    "description": "Ensure MultiTimescaleOptimizer runs and logs steps without errors",
+    "success": true
+}

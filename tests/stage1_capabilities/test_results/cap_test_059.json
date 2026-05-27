@@ -1,0 +1,7 @@
+{
+    "test_id": 59,
+    "test_name": "Variational: Multi-Level ELBO Distribution",
+    "description": "Compare ELBO convergence characteristics across different levels",
+    "success": true,
+    "levels": 3
+}

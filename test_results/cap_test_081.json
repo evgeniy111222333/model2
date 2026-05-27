@@ -1,0 +1,7 @@
+{
+    "test_id": 81,
+    "test_name": "Resonance: Context Vector Calculation",
+    "description": "Check context resonance vector calculation correctness on repeats",
+    "success": true,
+    "resonance_steps": 2
+}

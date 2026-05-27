@@ -1,0 +1,12 @@
+{
+    "test_id": 35,
+    "test_name": "Boundary: HTML Code Layout Boundaries",
+    "description": "Verify boundaries align with syntactic tags inside markup streams",
+    "success": true,
+    "boundaries": [
+        0,
+        12,
+        92,
+        102
+    ]
+}

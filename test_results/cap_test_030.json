@@ -1,0 +1,7 @@
+{
+    "test_id": 30,
+    "test_name": "Predictive: Complexity Penalty Bounds",
+    "description": "Verify complexity weight bounds in prediction error loop calculations",
+    "success": true,
+    "mean_error": 1.7135367104235817
+}

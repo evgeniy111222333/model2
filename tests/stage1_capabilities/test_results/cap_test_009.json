@@ -1,0 +1,7 @@
+{
+    "test_id": 9,
+    "test_name": "Modality: Mixed Executable Data",
+    "description": "Evaluate modality detection on mixed instruction codes and ASCII strings",
+    "success": true,
+    "detected_modality": "audio"
+}

@@ -1,0 +1,10 @@
+{
+    "test_id": 54,
+    "test_name": "Variational: Latent Space Sparsity",
+    "description": "Examine the sparsity pattern of the latent representations",
+    "success": true,
+    "latent_sparsity": 0.0,
+    "latent_shape": [
+        128
+    ]
+}

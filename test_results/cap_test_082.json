@@ -1,0 +1,7 @@
+{
+    "test_id": 82,
+    "test_name": "Resonance: Field Injection Stabilization",
+    "description": "Verify that injecting context resonance reduces u and Phi field variance",
+    "success": true,
+    "mean_norm": 0.17174525558948517
+}

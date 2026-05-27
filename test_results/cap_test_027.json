@@ -1,0 +1,7 @@
+{
+    "test_id": 27,
+    "test_name": "Predictive: Anomaly Byte Deletion",
+    "description": "Check prediction error response under stream contraction anomaly",
+    "success": true,
+    "max_error": 3.7565395832061768
+}

@@ -1,0 +1,10 @@
+{
+    "test_id": 67,
+    "test_name": "IB: Conversion Depth Hierarchy Limits",
+    "description": "Test information bottleneck optimization under large hierarchy levels",
+    "success": true,
+    "levels_optimized": [
+        0,
+        1
+    ]
+}

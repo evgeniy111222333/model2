@@ -1,0 +1,7 @@
+{
+    "test_id": 55,
+    "test_name": "Variational: Reconstruction Decoder Accuracy",
+    "description": "Verify decoding of state reconstructs input distribution features",
+    "success": false,
+    "final_elbo": -999.0
+}

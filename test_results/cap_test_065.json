@@ -1,0 +1,12 @@
+{
+    "test_id": 65,
+    "test_name": "IB: GNN Conversion Feature Dimensionality",
+    "description": "Verify compression ratio of conversion levels using graph networks",
+    "success": true,
+    "level_count": 3,
+    "sizes": [
+        19,
+        10,
+        5
+    ]
+}

@@ -1,0 +1,7 @@
+{
+    "test_id": 74,
+    "test_name": "Memory: Crystallization Consolidation Sweep",
+    "description": "Test crystallized consolidation count under altered theta thresholds",
+    "success": true,
+    "crystal_count": 1
+}

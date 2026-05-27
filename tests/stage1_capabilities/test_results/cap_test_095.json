@@ -1,0 +1,7 @@
+{
+    "test_id": 95,
+    "test_name": "Optim: Correlation Length \u03be Scaling",
+    "description": "Examine correlation length metric bounds under steady-state configurations",
+    "success": true,
+    "correlation_length": 0.5084567666053772
+}

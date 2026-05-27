@@ -1,0 +1,8 @@
+{
+    "test_id": 6,
+    "test_name": "Modality: Dense Binary Data",
+    "description": "Check high entropy uniform random bytes detection",
+    "success": false,
+    "detected_modality": "audio",
+    "entropy": 2.7389856208088226
+}

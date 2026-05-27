@@ -1,0 +1,6 @@
+{
+    "test_id": 99,
+    "test_name": "Optim: CMA-ES Generation Count convergence",
+    "description": "Check CMA-ES generation counts convergence logic on simple parameters",
+    "success": true
+}

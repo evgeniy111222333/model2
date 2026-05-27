@@ -1,0 +1,8 @@
+{
+    "test_id": 11,
+    "test_name": "Field: Stability Under Empty Input",
+    "description": "Verify that empty inputs do not crash the field and leave statistics finite",
+    "success": true,
+    "empty_input": true,
+    "error_msg": "Shape of array too small to calculate a numerical gradient, at least (edge_order + 1) elements are required."
+}

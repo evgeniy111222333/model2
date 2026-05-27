@@ -1,0 +1,8 @@
+{
+    "test_id": 4,
+    "test_name": "Modality: JSON Structural Brackets",
+    "description": "Verify modality detection on structural JSON code with brackets and colons",
+    "success": true,
+    "detected_modality": "structured",
+    "unique_bytes": 31
+}

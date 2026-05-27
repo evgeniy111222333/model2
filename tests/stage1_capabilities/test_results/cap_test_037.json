@@ -1,0 +1,7 @@
+{
+    "test_id": 37,
+    "test_name": "Boundary: Windowed Overlap Contiguity",
+    "description": "Examine boundaries stability when processed using sliding windows with overlaps",
+    "success": false,
+    "error": "'charmap' codec can't encode character '\\U0001f9e0' in position 2: character maps to <undefined>"
+}

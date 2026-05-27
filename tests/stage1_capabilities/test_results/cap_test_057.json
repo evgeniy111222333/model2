@@ -1,0 +1,7 @@
+{
+    "test_id": 57,
+    "test_name": "Variational: Learning Rate Stability Sweep",
+    "description": "Ensure variational updates are stable under higher training learning rates",
+    "success": true,
+    "is_stable": true
+}

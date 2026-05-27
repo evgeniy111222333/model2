@@ -1,0 +1,7 @@
+{
+    "test_id": 38,
+    "test_name": "Boundary: Detector Scale Sensitivity",
+    "description": "Verify boundary detection performs correctly on standard scale parameters",
+    "success": true,
+    "boundary_count": 0
+}

@@ -1,0 +1,7 @@
+{
+    "test_id": 94,
+    "test_name": "Optim: Phase Order Parameter \u03c8 Evolution",
+    "description": "Check \u03c8 field value ranges during spatial self-organization steps",
+    "success": true,
+    "order_parameter": 0.20309345424175262
+}

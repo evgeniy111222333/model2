@@ -1,0 +1,7 @@
+{
+    "test_id": 19,
+    "test_name": "Field: Kill Rate k_base Dynamics",
+    "description": "Check inhibitory suppression levels under high kill rate k_base",
+    "success": true,
+    "u_mean": -15.930706024169922
+}

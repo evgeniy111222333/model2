@@ -1,0 +1,8 @@
+{
+    "test_id": 31,
+    "test_name": "Boundary: Sharp Step Transition",
+    "description": "Verify transition boundary is located near the partition interface (AAAAABBBBB)",
+    "success": false,
+    "boundaries": [],
+    "has_mid_boundary": false
+}

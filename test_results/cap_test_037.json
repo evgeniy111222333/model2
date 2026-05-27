@@ -1,0 +1,22 @@
+{
+    "test_id": 37,
+    "test_name": "Boundary: Windowed Overlap Contiguity",
+    "description": "Examine boundaries stability when processed using sliding windows with overlaps",
+    "success": true,
+    "boundary_count": 13,
+    "boundaries": [
+        502,
+        601,
+        634,
+        667,
+        700,
+        748,
+        781,
+        814,
+        847,
+        880,
+        913,
+        946,
+        999
+    ]
+}

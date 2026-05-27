@@ -1,0 +1,13 @@
+{
+    "test_id": 24,
+    "test_name": "Predictive: Context Size Sweep",
+    "description": "Verify convergence when prediction error loop is active with standard context",
+    "success": true,
+    "errors": [
+        3.4615206718444824,
+        3.389538049697876,
+        3.28857684135437,
+        3.165026903152466,
+        3.024970531463623
+    ]
+}

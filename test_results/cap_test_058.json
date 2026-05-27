@@ -1,0 +1,11 @@
+{
+    "test_id": 58,
+    "test_name": "Variational: Dynamic Observation Feed",
+    "description": "Verify observation updates track Phi field mean values dynamically",
+    "success": true,
+    "elbo_values": [
+        -5.6760101318359375,
+        -5.979603290557861,
+        -5.896383762359619
+    ]
+}

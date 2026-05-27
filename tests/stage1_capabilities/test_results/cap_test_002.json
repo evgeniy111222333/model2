@@ -1,0 +1,8 @@
+{
+    "test_id": 2,
+    "test_name": "Modality: Plain Text UTF-8 (Ukrainian)",
+    "description": "Check if Ukrainian UTF-8 text is detected as text_utf8 or similar",
+    "success": true,
+    "detected_modality": "audio",
+    "entropy": 3.9533506491740655
+}

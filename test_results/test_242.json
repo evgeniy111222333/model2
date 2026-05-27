@@ -1,0 +1,14 @@
+{
+  "run_id": 242,
+  "suite_id": 2,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "true_modality": "structured",
+    "detected_modality": "structured",
+    "correct": true,
+    "length": 500,
+    "confidence": 1.0,
+    "entropy": 4.126294763217666,
+    "time_ms": 0.0
+  }
+}

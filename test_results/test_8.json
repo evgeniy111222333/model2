@@ -1,0 +1,15 @@
+{
+  "run_id": 8,
+  "suite_id": 1,
+  "timestamp": "2026-05-27 13:40:24",
+  "data": {
+    "D_u": 0.002,
+    "D_v": 0.08,
+    "initial_fe": 4.158867130932069,
+    "final_fe": 4.158641684426817,
+    "fe_decrease": 0.00022544650525180288,
+    "num_clusters": 12,
+    "time_ms": 10920.56131362915,
+    "status": "success"
+  }
+}

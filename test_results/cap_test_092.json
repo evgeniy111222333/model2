@@ -1,0 +1,7 @@
+{
+    "test_id": 92,
+    "test_name": "Optim: Fisher Matrix Condition Number",
+    "description": "Verify that the condition number is stable and finite",
+    "success": true,
+    "condition_number": 1250022528.0
+}

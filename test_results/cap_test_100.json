@@ -1,0 +1,6 @@
+{
+    "test_id": 100,
+    "test_name": "Optim: Semantic Query Readout Init",
+    "description": "Ensure semantic readout layers initialize correctly",
+    "success": true
+}

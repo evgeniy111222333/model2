@@ -1,0 +1,8 @@
+{
+    "test_id": 14,
+    "test_name": "Field: dt Time-Step Scaling Sensitivity",
+    "description": "Check how time-step changes (dt=0.3 vs default) affect stability",
+    "success": true,
+    "u_mean": 0.40561774373054504,
+    "phi_mean": -0.4969867467880249
+}

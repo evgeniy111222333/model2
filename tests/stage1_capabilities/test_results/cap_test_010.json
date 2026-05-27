@@ -1,0 +1,8 @@
+{
+    "test_id": 10,
+    "test_name": "Modality: Detection Speed & Volume",
+    "description": "Measure speed and scaling of modality classification on varying data sizes",
+    "success": true,
+    "detected_modality": "text_ascii",
+    "length": 10000
+}

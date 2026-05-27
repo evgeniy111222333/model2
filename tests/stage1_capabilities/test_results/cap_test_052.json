@@ -1,0 +1,8 @@
+{
+    "test_id": 52,
+    "test_name": "Variational: ELBO Convergence (Predictable Input)",
+    "description": "Check that ELBO converges (becomes less negative) on predictable pattern data",
+    "success": false,
+    "elbo_first": 0.0,
+    "elbo_last": 0.0
+}

@@ -1,0 +1,15 @@
+{
+  "run_id": 269,
+  "suite_id": 3,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "n_levels": 2,
+    "lr": 0.01778279410038923,
+    "obs_len": 512,
+    "initial_elbo": -5.857145309448242,
+    "final_elbo": -5.962681770324707,
+    "elbo_diff": -0.10553646087646484,
+    "time_ms": 0.0,
+    "status": "success"
+  }
+}

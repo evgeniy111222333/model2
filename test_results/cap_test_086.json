@@ -1,0 +1,6 @@
+{
+    "test_id": 86,
+    "test_name": "Resonance: Knowledge Transfer Convergence speed",
+    "description": "Examine transfer rate speed when processing mixed streams",
+    "success": true
+}

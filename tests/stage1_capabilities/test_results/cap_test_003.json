@@ -1,0 +1,8 @@
+{
+    "test_id": 3,
+    "test_name": "Modality: HTML Markup",
+    "description": "Check modality classification and boundary dynamics for HTML markup streams",
+    "success": true,
+    "detected_modality": "text_ascii",
+    "boundary_count": 0
+}

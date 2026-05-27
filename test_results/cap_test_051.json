@@ -1,0 +1,14 @@
+{
+    "test_id": 51,
+    "test_name": "Variational: ELBO Value Sanity Check",
+    "description": "Verify variational inference calculates finite ELBO values",
+    "success": true,
+    "elbo_count": 4,
+    "elbo_values": [
+        -5.771694660186768,
+        -5.970670223236084,
+        -5.882937908172607,
+        -5.911635398864746
+    ],
+    "all_finite": true
+}

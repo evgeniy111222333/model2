@@ -1,0 +1,20 @@
+{
+    "test_id": 61,
+    "test_name": "IB: Objective Value Computation",
+    "description": "Verify that mutual information bottleneck objective computes finite metrics",
+    "success": true,
+    "levels_computed": [
+        0,
+        1
+    ],
+    "ib_stats": {
+        "0": {
+            "I_ST": 1.1862891912460327,
+            "I_TY": 0.0
+        },
+        "1": {
+            "I_ST": 0.0,
+            "I_TY": 0.0
+        }
+    }
+}

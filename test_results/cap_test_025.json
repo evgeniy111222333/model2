@@ -1,0 +1,7 @@
+{
+    "test_id": 25,
+    "test_name": "Predictive: Anomaly Single Byte Flip",
+    "description": "Verify predictive error loop updates correctly with localized modifications",
+    "success": true,
+    "mean_error": 1.9218665957450867
+}

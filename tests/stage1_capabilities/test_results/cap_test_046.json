@@ -1,0 +1,8 @@
+{
+    "test_id": 46,
+    "test_name": "Clustering: Pattern Group Consistency",
+    "description": "Ensure identical patterns separated by noise are assigned same pattern group",
+    "success": true,
+    "cluster_count": 0,
+    "pattern_groups": []
+}

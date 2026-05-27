@@ -1,0 +1,7 @@
+{
+    "test_id": 26,
+    "test_name": "Predictive: Anomaly Byte Insertion",
+    "description": "Check prediction error response under stream expansion anomaly",
+    "success": false,
+    "max_error": 999.0
+}

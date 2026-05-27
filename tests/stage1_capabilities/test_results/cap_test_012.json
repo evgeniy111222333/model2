@@ -1,0 +1,8 @@
+{
+    "test_id": 12,
+    "test_name": "Field: Uniform Repeated Byte",
+    "description": "Ensure u and Phi converge to stable, low variance fields on uniform input",
+    "success": true,
+    "u_std": 2.86102294921875e-06,
+    "phi_std": 0.18454523384571075
+}

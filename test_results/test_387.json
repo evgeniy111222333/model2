@@ -1,0 +1,13 @@
+{
+  "run_id": 387,
+  "suite_id": 4,
+  "timestamp": "2026-05-27 13:38:14",
+  "data": {
+    "beta": 1.0,
+    "n_clusters": 16,
+    "I_ST": 0.0,
+    "I_TY": 0.0,
+    "objective": 0.0,
+    "time_ms": 10.312795639038086
+  }
+}

@@ -1,0 +1,10 @@
+{
+    "test_id": 62,
+    "test_name": "IB: Optimal Beta sweep",
+    "description": "Ensure optimal beta parameter selection correctly trades compression for prediction",
+    "success": true,
+    "optimal_betas": [
+        2.1791666666666667,
+        1.0
+    ]
+}

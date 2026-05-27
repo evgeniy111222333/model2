@@ -1,0 +1,16 @@
+{
+    "test_id": 1,
+    "test_name": "Modality: Plain Text ASCII (English)",
+    "description": "Check if English ASCII plaintext is detected with high confidence as text_ascii",
+    "success": true,
+    "detected_modality": "text_ascii",
+    "posteriors": {
+        "text_ascii": 1.0,
+        "text_utf8": 1.573621544433031e-256,
+        "image": 3.0596753648837318e-201,
+        "audio": 6.062313315378815e-133,
+        "binary": 0.0,
+        "structured": 2.0685578910271185e-259
+    },
+    "entropy": 4.434650252549855
+}

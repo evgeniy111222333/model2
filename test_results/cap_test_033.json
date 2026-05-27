@@ -1,0 +1,17 @@
+{
+    "test_id": 33,
+    "test_name": "Boundary: Noisy Transition Robustness",
+    "description": "Check boundary localization correctness under moderate data corruptions",
+    "success": true,
+    "boundaries": [
+        3,
+        17,
+        53,
+        67,
+        88,
+        101,
+        119,
+        149,
+        159
+    ]
+}

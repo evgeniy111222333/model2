@@ -1,0 +1,8 @@
+{
+    "test_id": 29,
+    "test_name": "Predictive: Hierarchical Alignment",
+    "description": "Ensure hierarchical predictive coding learns without errors on structured data",
+    "success": true,
+    "error_count": 2,
+    "final_hpc_error": 1.756169025450945
+}

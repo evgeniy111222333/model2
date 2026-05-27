@@ -1,0 +1,8 @@
+{
+    "test_id": 13,
+    "test_name": "Field: Stability Under White Noise",
+    "description": "Check that the field does not explode under high-amplitude white noise",
+    "success": true,
+    "u_mean": 0.45451098680496216,
+    "phi_mean": -0.4726329743862152
+}

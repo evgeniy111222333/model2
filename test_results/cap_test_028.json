@@ -1,0 +1,8 @@
+{
+    "test_id": 28,
+    "test_name": "Predictive: Field Correction Rate Sensitivity",
+    "description": "Examine field dynamics adjustment magnitude under prediction feedback loop",
+    "success": true,
+    "max_correction": 4.782710902873077e-07,
+    "mean_correction": 4.169146441935321e-07
+}

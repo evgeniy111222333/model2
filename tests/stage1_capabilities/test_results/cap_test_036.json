@@ -1,0 +1,7 @@
+{
+    "test_id": 36,
+    "test_name": "Boundary: CSV File layout",
+    "description": "Check boundary markers on tabular numerical records separated by newlines",
+    "success": true,
+    "boundary_count": 0
+}

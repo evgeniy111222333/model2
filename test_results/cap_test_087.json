@@ -1,0 +1,6 @@
+{
+    "test_id": 87,
+    "test_name": "Resonance: Level Splitting Auto-Catalysis",
+    "description": "Verify level splitting components initialize correctly on hierarchy changes",
+    "success": true
+}

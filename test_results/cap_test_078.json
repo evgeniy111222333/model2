@@ -1,0 +1,7 @@
+{
+    "test_id": 78,
+    "test_name": "Memory: LSH Index Search Speed",
+    "description": "Compare memory lookup times with LSH indexing enabled",
+    "success": true,
+    "use_lsh": true
+}

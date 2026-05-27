@@ -1,0 +1,7 @@
+{
+    "test_id": 47,
+    "test_name": "Clustering: Temperature Scale Effect",
+    "description": "Check clustering behaviour when running at customized temperature scaling",
+    "success": true,
+    "cluster_count": 15
+}

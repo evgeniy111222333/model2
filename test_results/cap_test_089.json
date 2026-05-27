@@ -1,0 +1,6 @@
+{
+    "test_id": 89,
+    "test_name": "Resonance: Injection Strength Sweep",
+    "description": "Check field alignment behaviors under context resonance sweeps",
+    "success": true
+}

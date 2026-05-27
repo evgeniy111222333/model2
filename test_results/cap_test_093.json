@@ -1,0 +1,7 @@
+{
+    "test_id": 93,
+    "test_name": "Optim: Phase Transition Tc Consistency",
+    "description": "Verify Tc calculations on structured repeating inputs yields consistent values",
+    "success": true,
+    "T_c": 5.080301507537689
+}

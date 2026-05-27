@@ -1,0 +1,14 @@
+{
+  "run_id": 157,
+  "suite_id": 2,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "true_modality": "image",
+    "detected_modality": "image",
+    "correct": true,
+    "length": 100,
+    "confidence": 1.0,
+    "entropy": 6.228758439731454,
+    "time_ms": 1.0404586791992188
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "run_id": 184,
+  "suite_id": 2,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "true_modality": "audio",
+    "detected_modality": "audio",
+    "correct": true,
+    "length": 100,
+    "confidence": 1.0,
+    "entropy": 5.7100154099221845,
+    "time_ms": 0.0
+  }
+}

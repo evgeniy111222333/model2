@@ -1,0 +1,7 @@
+{
+    "test_id": 73,
+    "test_name": "Memory: Working Memory Key Recall",
+    "description": "Verify recall retrieval correctness from short-term working memory cache",
+    "success": true,
+    "context_vector_norm": 0.3535902202129364
+}

@@ -1,0 +1,7 @@
+{
+    "test_id": 75,
+    "test_name": "Memory: High Frequency Consolidation Rate",
+    "description": "Check how fast highly repeated sequences crystallize into memory",
+    "success": true,
+    "crystal_count": 1
+}

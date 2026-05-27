@@ -1,0 +1,6 @@
+{
+    "test_id": 85,
+    "test_name": "Resonance: Cross-Modal Knowledge Transfer",
+    "description": "Check knowledge transfer alignment mapping between distinct modalities",
+    "success": true
+}

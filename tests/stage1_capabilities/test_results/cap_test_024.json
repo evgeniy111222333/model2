@@ -1,0 +1,7 @@
+{
+    "test_id": 24,
+    "test_name": "Predictive: Context Size Sweep",
+    "description": "Verify convergence when prediction error loop is active with standard context",
+    "success": false,
+    "errors": []
+}

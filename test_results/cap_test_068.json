@@ -1,0 +1,7 @@
+{
+    "test_id": 68,
+    "test_name": "IB: Optimizer Convergence Speed",
+    "description": "Measure execution speed of information bottleneck optimization sweeps",
+    "success": true,
+    "levels_count": 2
+}

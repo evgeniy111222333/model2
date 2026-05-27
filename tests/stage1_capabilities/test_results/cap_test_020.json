@@ -1,0 +1,8 @@
+{
+    "test_id": 20,
+    "test_name": "Field: Numeric Policy Clipping",
+    "description": "Verify that extreme inputs are bounded by AdaptiveNumericPolicy to prevent overflow",
+    "success": true,
+    "u_max": -13.948680877685547,
+    "u_min": -13.948680877685547
+}

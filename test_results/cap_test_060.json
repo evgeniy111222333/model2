@@ -1,0 +1,10 @@
+{
+    "test_id": 60,
+    "test_name": "Variational: Free Energy vs ELBO correlation",
+    "description": "Check correlation between physical field free energy and variational ELBO",
+    "success": true,
+    "fe_first": 3.465691227598727,
+    "fe_last": 3.4618392767036856,
+    "elbo_first": -5.778522491455078,
+    "elbo_last": -5.834324836730957
+}

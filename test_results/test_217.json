@@ -1,0 +1,14 @@
+{
+  "run_id": 217,
+  "suite_id": 2,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "true_modality": "binary",
+    "detected_modality": "binary",
+    "correct": true,
+    "length": 500,
+    "confidence": 1.0,
+    "entropy": 1.4159920220056534,
+    "time_ms": 1.012563705444336
+  }
+}

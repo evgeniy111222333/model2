@@ -1,0 +1,14 @@
+{
+  "run_id": 145,
+  "suite_id": 2,
+  "timestamp": "2026-05-27 13:38:12",
+  "data": {
+    "true_modality": "text_utf8",
+    "detected_modality": "text_utf8",
+    "correct": true,
+    "length": 500,
+    "confidence": 1.0,
+    "entropy": 4.145379691031903,
+    "time_ms": 0.0
+  }
+}

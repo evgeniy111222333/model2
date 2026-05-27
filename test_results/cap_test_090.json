@@ -1,0 +1,6 @@
+{
+    "test_id": 90,
+    "test_name": "Resonance: Semantic Latent Dynamics Init",
+    "description": "Ensure semantic latent dynamics execute without crashes",
+    "success": true
+}

@@ -1,0 +1,7 @@
+{
+    "test_id": 79,
+    "test_name": "Memory: LSH Index Update Correctness",
+    "description": "Verify that adding crystals correctly updates LSH buckets without errors",
+    "success": true,
+    "crystals": 2
+}

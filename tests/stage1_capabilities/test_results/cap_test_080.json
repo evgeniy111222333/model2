@@ -1,0 +1,7 @@
+{
+    "test_id": 80,
+    "test_name": "Memory: Forgetting step validation",
+    "description": "Verify forgetting steps remove weak crystallized traces",
+    "success": true,
+    "crystal_count": 2
+}

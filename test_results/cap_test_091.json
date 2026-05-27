@@ -1,0 +1,7 @@
+{
+    "test_id": 91,
+    "test_name": "Optim: Fisher Information Matrix trace",
+    "description": "Check that Fisher Information Matrix calculates positive and finite traces",
+    "success": true,
+    "fisher_trace": 0.8706091642379761
+}

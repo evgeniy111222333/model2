@@ -1,0 +1,9 @@
+{
+    "test_id": 22,
+    "test_name": "Predictive: Periodic Convergence",
+    "description": "Examine prediction error reduction on simple repeating multi-byte patterns",
+    "success": false,
+    "min_error": 999.0,
+    "max_error": 999.0,
+    "final_error": 999.0
+}

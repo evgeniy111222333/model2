@@ -1,0 +1,8 @@
+{
+    "test_id": 16,
+    "test_name": "Field: Diffusion constant D_u Sensitivity",
+    "description": "Analyze spatial variance under high diffusion constant D_u",
+    "success": true,
+    "u_std": 9.5367431640625e-07,
+    "phi_std": 0.18617404997348785
+}

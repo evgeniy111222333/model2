@@ -1,0 +1,7 @@
+{
+    "test_id": 70,
+    "test_name": "IB: Botttleneck Feature Decoding",
+    "description": "Verify cluster representations can be reconstructed from bottleneck states",
+    "success": true,
+    "has_ib": true
+}

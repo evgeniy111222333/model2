@@ -1,0 +1,10 @@
+{
+    "test_id": 69,
+    "test_name": "IB: Parameter Beta Sensitivity",
+    "description": "Verify information bottleneck output when parameter sweeps occur",
+    "success": true,
+    "betas": [
+        2.1791666666666667,
+        1.0
+    ]
+}

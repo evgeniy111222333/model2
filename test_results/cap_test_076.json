@@ -1,0 +1,7 @@
+{
+    "test_id": 76,
+    "test_name": "Memory: Low Frequency Decay",
+    "description": "Verify low frequency patterns do not consolidating and decay over time",
+    "success": true,
+    "crystal_count": 1
+}

@@ -1,0 +1,6 @@
+{
+    "test_id": 97,
+    "test_name": "Optim: MultiTimescale Learning Rate Adaptation",
+    "description": "Verify learning rate adjustment factors in response to free energy change",
+    "success": true
+}

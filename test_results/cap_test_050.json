@@ -1,0 +1,8 @@
+{
+    "test_id": 50,
+    "test_name": "Clustering: Merge Threshold Sweep",
+    "description": "Sweep merge threshold parameter and check cluster outputs",
+    "success": true,
+    "cluster_count": 15,
+    "threshold": 0.3
+}

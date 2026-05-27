@@ -1,0 +1,8 @@
+{
+    "test_id": 71,
+    "test_name": "Memory: Working Memory Ring Eviction",
+    "description": "Verify oldest cluster details are evicted when working memory exceeds buffer size",
+    "success": true,
+    "buffer_size": 15,
+    "capacity": 50
+}

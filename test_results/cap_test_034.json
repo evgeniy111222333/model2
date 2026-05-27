@@ -1,0 +1,23 @@
+{
+    "test_id": 34,
+    "test_name": "Boundary: High-Noise Interface Masking",
+    "description": "Verify boundary detection logic when structured blocks are separated by noise",
+    "success": true,
+    "boundary_count": 14,
+    "boundaries": [
+        80,
+        101,
+        117,
+        135,
+        149,
+        165,
+        183,
+        197,
+        215,
+        237,
+        253,
+        267,
+        281,
+        301
+    ]
+}

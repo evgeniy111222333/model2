@@ -1,0 +1,8 @@
+{
+    "test_id": 7,
+    "test_name": "Modality: Sinusoidal Audio Waveform",
+    "description": "Examine modality detection on structured numerical audio sine wave representations",
+    "success": true,
+    "detected_modality": "audio",
+    "unique_bytes": 244
+}

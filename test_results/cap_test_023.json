@@ -1,0 +1,8 @@
+{
+    "test_id": 23,
+    "test_name": "Predictive: Learning Rate Sensitivity",
+    "description": "Compare learning speed under high prediction error learning rate",
+    "success": true,
+    "loop_count": 34,
+    "final_error": 0.1376044899225235
+}

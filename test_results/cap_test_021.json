@@ -1,0 +1,9 @@
+{
+    "test_id": 21,
+    "test_name": "Predictive: Constant Input Error Convergence",
+    "description": "Verify that prediction error converges close to zero for static byte sequences",
+    "success": true,
+    "first_error": 3.0585741996765137,
+    "last_error": 5.328513725544326e-05,
+    "convergence_ratio": 1.742156108590692e-05
+}

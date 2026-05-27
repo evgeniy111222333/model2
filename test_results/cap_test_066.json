@@ -1,0 +1,7 @@
+{
+    "test_id": 66,
+    "test_name": "IB: GNN vs Default Conversion comparison",
+    "description": "Verify representation features under GNN conversion",
+    "success": true,
+    "level_count": 1
+}
