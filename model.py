@@ -28,6 +28,7 @@ from bcs.perception.feedback import FeedbackMechanism
 from bcs.perception.geometry import FisherInformationGeometry
 from bcs.perception.token import EmergentTokenDiscovery
 from bcs.information.conversion import GNNConversionLayers, ConversionLayersV3
+from bcs.information.character_trajectory import CharacterTrajectory, create_character_trajectory
 from bcs.perception.phase import PhaseTransitionAnalyzer
 from bcs.memory.memory import CrystallizedMemory, WorkingMemory, SequenceAssociativeMemory
 from bcs.cognition.semantic import SemanticLatentDynamics, SemanticByteDecoder, SemanticAssociativeReasoner, SemanticDifferentiableMemoryGraph, SemanticStateConstructor, SemanticQueryReadout
@@ -188,6 +189,7 @@ class BCSModelV6:
         # Всі дані проходять через HierarchicalTrajectory.
         # Немає max_length обмеження, немає window buffer.
         self.hierarchical_trajectory: Optional[HierarchicalTrajectory] = None
+        self.character_trajectory: Optional[CharacterTrajectory] = None  # V11: Character-level
         if use_geodesic_context:  # Використовуємо той же флаг
             try:
                 self.hierarchical_trajectory = HierarchicalTrajectory(
@@ -543,6 +545,21 @@ class BCSModelV6:
             results['hierarchical_trajectory'] = traj_summary
             print(f"   📊 HierarchicalTrajectory: {traj_summary['total_points']} точок, "
                   f"depth={traj_summary['depth']}, base_size={traj_summary['base_size']}")
+            
+            # V11: Character-level trajectory (для text_utf8 модальності)
+            if self.detected_modality in ['text_utf8', 'text_ascii']:
+                try:
+                    self.character_trajectory = create_character_trajectory(
+                        self.substrate.raw_data,
+                        base_trajectory=self.hierarchical_trajectory,
+                    )
+                    ct_stats = self.character_trajectory.get_stats()
+                    results['character_trajectory'] = ct_stats
+                    print(f"   📝 CharacterTrajectory: {ct_stats['n_characters']} символів, "
+                          f"{ct_stats.get('manifold', {}).get('n_regions', 0)} regions")
+                except Exception as e:
+                    print(f"   📝 CharacterTrajectory: ПОМИЛКА ініціалізації — {e}")
+                    self.character_trajectory = None
         if self.use_manifold_trajectory and self.manifold_trajectory is not None:
             # Створити траєкторію з розподілу байтів субстрату
             substrate_dist = self.substrate.byte_distribution.copy()

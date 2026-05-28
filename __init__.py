@@ -5,7 +5,10 @@ from bcs.core.embedding import DynamicByteEmbedding
 from bcs.core.interaction import TorchSpaceValueInteractionV8, FFTSpaceValueInteractionV7, FullTensorInteractionV6
 from bcs.core.field import FieldSystemV6, PredictionErrorLoop
 from bcs.information.variational import VariationalInference
-from bcs.information.bottleneck import IBOptimizer, InformationBottleneck
+from bcs.perception.utf8_segmenter import UTF8Segmenter, AdaptiveUTF8Segmenter, create_segmenter
+from bcs.information.character_manifold import CharacterManifold, create_character_manifold
+from bcs.information.character_continuation import CharacterGeometricContinuation, CharacterContinuationReader, create_continuation
+from bcs.information.character_trajectory import CharacterTrajectory, MultiModalCharacterTrajectory, create_character_trajectory
 from bcs.information.modality import BayesianModalityDetector, KnowledgeTransfer
 from bcs.optimization.optimization import MultiTimescaleOptimizer, CMAESOptimizer, TimeScaleSystem
 from bcs.perception.predictive import HierarchicalPredictiveCoding, PredictiveCoding
