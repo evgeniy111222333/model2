@@ -7,6 +7,7 @@ from bcs.core.field import FieldSystemV6, PredictionErrorLoop
 from bcs.information.variational import VariationalInference
 from bcs.perception.utf8_segmenter import UTF8Segmenter, AdaptiveUTF8Segmenter, create_segmenter
 from bcs.information.character_manifold import CharacterManifold, create_character_manifold
+from bcs.information.character_manifold_v2 import CharacterManifoldOptimized, CharacterManifoldV2
 from bcs.information.character_continuation import CharacterGeometricContinuation, CharacterContinuationReader, create_continuation
 from bcs.information.character_trajectory import CharacterTrajectory, MultiModalCharacterTrajectory, create_character_trajectory
 from bcs.information.modality import BayesianModalityDetector, KnowledgeTransfer
