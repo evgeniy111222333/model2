@@ -174,9 +174,10 @@ class IBOptimizer:
     4. Фазовий перехід знаходиться на РЕАЛЬНІЙ IB-кривій
     """
 
-    def __init__(self, beta_range: Tuple[float, float] = (0.1, 50.0), n_beta: int = 25,
-                 n_T: int = 12, ba_iters: int = 80, use_vib: bool = True,
-                 vib_epochs: int = 50, vib_lr: float = 0.05):
+    def __init__(self, beta_range: Tuple[float, float] = (0.1, 20.0), n_beta: int = 30,
+                 n_T: int = 24, ba_iters: int = 80, use_vib: bool = True,
+                 vib_epochs: int = 50, vib_lr: float = 0.05,
+                 Y_context_size: int = 16):
         self.beta_range = beta_range
         self.n_beta = n_beta
         self.n_T = n_T          # Кількість станів представлення T
@@ -184,6 +185,7 @@ class IBOptimizer:
         self.use_vib = use_vib
         self.vib_epochs = vib_epochs
         self.vib_lr = vib_lr
+        self.Y_context_size = Y_context_size  # Контекст для I(T;Y)
         self.level_ib_results = {}
 
     def _run_vib_training(
@@ -522,7 +524,7 @@ class IBOptimizer:
         clusters: List[Dict],
         substrate,
         level: int,
-        Y_context_size: int = 8,
+        Y_context_size: Optional[int] = None,
         items: Optional[List[Dict]] = None,
     ) -> Dict:
         """
@@ -531,6 +533,10 @@ class IBOptimizer:
         Якщо self.use_vib = True, використовує Variational Information Bottleneck (VIB) на PyTorch.
         Інакше — класичний Blahut-Arimoto.
         """
+        # Use instance default if not specified
+        if Y_context_size is None:
+            Y_context_size = self.Y_context_size
+        
         if not self.use_vib:
             # Legacy Blahut-Arimoto flow
             data = substrate.raw_data

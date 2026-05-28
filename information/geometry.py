@@ -609,10 +609,15 @@ class AdvancedModalityDetector:
             # DISTINCTIVE: High bytes 0x80-0xC0 (continuation) AND 0xC0-0xF5 (leading)
             continuation = p[0x80:0xC0].sum()
             leading = p[0xC0:0xF6].sum()
+            # high_utf8: bytes >= 0x80 (all non-ASCII UTF8 bytes)
+            high_utf8 = p[0x80:].sum()
             # Must have BOTH and they must be HIGH (>30% combined for real UTF8)
             score = continuation * 0.6 + leading * 0.4
             if score > 0.3:
                 score = 0.5 + score * 0.5  # Boost when we have true UTF8
+            # Extra check: high_utf8 should be > 0 for true UTF8 text
+            if high_utf8 < 0.05:
+                score *= 0.5  # Penalty for suspiciously low high bytes
             return min(1.0, score)
         
         elif mod == 'image':

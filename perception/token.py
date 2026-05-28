@@ -31,6 +31,67 @@ class EmergentTokenDiscovery:
         self.min_info_gain = min_info_gain
         self.discovered_tokens = []
 
+    @staticmethod
+    def _is_valid_utf8(token: bytes) -> bool:
+        """
+        Перевірити чи токен є повним UTF-8 (без обрізаних послідовностей).
+        
+        Повертає True якщо токен:
+        - ASCII (1 байт)
+        - Повна багатобайтова послідовність
+        - Або може бути закодований без помилок
+        """
+        if len(token) == 0:
+            return True
+        
+        # Перевіряємо чи можна декодувати
+        try:
+            token.decode('utf-8')
+            return True
+        except UnicodeDecodeError:
+            return False
+    
+    def _is_utf8_boundary_safe(self, token: bytes, position: int, data: bytes) -> bool:
+        """
+        Перевірити чи токен не обрізає UTF-8 послідовність на межі.
+        
+        Якщо токен закінчується в середині UTF-8 послідовності - це "битий" токен.
+        """
+        # Якщо токен ASCII - завжди OK
+        if all(b < 0x80 for b in token):
+            return True
+        
+        # Перевіряємо закінчення токена
+        # Якщо останній байт - continuation byte (0x80-0xBF), це може бути проблема
+        last_byte = token[-1]
+        
+        # Визначаємо скільки байтів потрібно для завершення послідовності
+        if last_byte >= 0xC0 and last_byte <= 0xDF:
+            expected_continuations = 1  # 2-byte seq, need 1 more
+        elif last_byte >= 0xE0 and last_byte <= 0xEF:
+            expected_continuations = 2  # 3-byte seq, need 2 more
+        elif last_byte >= 0xF0 and last_byte <= 0xF4:
+            expected_continuations = 3  # 4-byte seq, need 3 more
+        else:
+            return True  # Continuation byte or ASCII - check next byte
+        
+        # Перевіряємо чи є наступні байти в даних
+        end_pos = position + len(token)
+        if end_pos >= len(data):
+            # Обрізаний токен наприкінці даних
+            return False
+        
+        # Якщо за токеном ідуть continuation bytes - токен обрізаний
+        for i in range(expected_continuations):
+            if end_pos + i >= len(data):
+                break
+            next_byte = data[end_pos + i]
+            if next_byte < 0x80 or next_byte > 0xBF:
+                # Не continuation byte - UTF-8 обрізано
+                return False
+        
+        return True
+
     def discover_candidates(
         self,
         substrate,
@@ -57,6 +118,12 @@ class EmergentTokenDiscovery:
             for length in range(2, min(self.max_token_length + 1, len(cluster_bytes) + 1)):
                 for i in range(len(cluster_bytes) - length + 1):
                     token = cluster_bytes[i:i + length]
+                    
+                    # FILTER: Пропускаємо биті UTF-8 токени на межах
+                    # Якщо токен закінчується в середині багатобайтової послідовності
+                    abs_pos = start + i
+                    if not self._is_utf8_boundary_safe(token, abs_pos, data):
+                        continue
 
                     if token not in ngram_table:
                         ngram_table[token] = {
