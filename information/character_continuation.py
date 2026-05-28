@@ -23,13 +23,14 @@ class CharacterGeometricContinuation:
     - Працює з character embeddings
     - Використовує region-aware distances
     - Self-learned transition probabilities
+    - BIGRAM/TRIGRAM support (V13)
     
     Алгоритм:
-    1. Get character trajectory (recent characters as points)
-    2. Compute novelty for each historical character
+    1. Get character/bigram trajectory (recent context as points)
+    2. Compute novelty for each historical element
     3. Geometric attention: exp(-dist²/T) weighted by novelty
-    4. Aggregate character features
-    5. Predict next character
+    4. Aggregate features
+    5. Predict next character/bigram
     """
     
     def __init__(
@@ -38,16 +39,29 @@ class CharacterGeometricContinuation:
         temperature: float = 1.0,
         novelty_threshold: float = 0.3,
         max_context: int = 50,
+        use_ngrams: bool = True,  # NEW: enable bigram/trigram
+        max_ngram_order: int = 3,  # NEW: up to trigrams
     ):
         self.manifold = manifold
         self.temperature = temperature
         self.novelty_threshold = novelty_threshold
         self.max_context = max_context
+        self.use_ngrams = use_ngrams  # NEW
+        self.max_ngram_order = max_ngram_order  # NEW
         
         # Learned transition probabilities (overridden by manifold's)
         self._transition_cache = {}
         
         # History for adaptive temperature
+        self.history_confidences = []
+        
+        # NEW: N-gram statistics
+        self._bigram_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+        self._trigram_counts: Dict[Tuple[int, int, int], int] = defaultdict(int)
+        self._bigram_context: Dict[int, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        self._trigram_context: Dict[Tuple[int, int], Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        self._total_bigrams = 0
+        self._total_trigrams = 0
         self.history_confidences = []
     
     def continue_from_trajectory(
@@ -98,12 +112,21 @@ class CharacterGeometricContinuation:
         for i, point in enumerate(char_points):
             aggregated_embedding += attention_weights[i] * point.embedding
         
-        # 5. Predict next character
-        next_char_probs = self._predict_from_embedding(
-            aggregated_embedding,
-            last_region=char_points[-1].region if char_points else None,
-            region_hint=region_hint
-        )
+        # 5. Predict next character (V13: combined n-gram + embedding)
+        if self.use_ngrams and (self._total_bigrams > 0 or self._total_trigrams > 0):
+            # Use combined prediction: n-gram + embedding
+            next_char_probs = self._combined_prediction(
+                trajectory=recent,
+                context_embedding=aggregated_embedding,
+                last_region=char_points[-1].region if char_points else None,
+            )
+        else:
+            # Fallback to embedding-only
+            next_char_probs = self._predict_from_embedding(
+                aggregated_embedding,
+                last_region=char_points[-1].region if char_points else None,
+                region_hint=region_hint
+            )
         
         return next_char_probs
     
@@ -378,6 +401,92 @@ class CharacterGeometricContinuation:
             chosen = np.random.choice(len(sorted_cps), p=scaled_p)
             return sorted_cps[chosen], np.log(scaled_p[chosen])
 
+    # ============ N-GRAM LEARNING (V13) ============
+
+    def learn_ngrams(self, sequences: List[Tuple[bytes, int]]):
+        """Learn bigram and trigram statistics from sequences."""
+        if not self.use_ngrams:
+            return
+
+        codepoints = []
+        for seq_bytes, pos in sequences:
+            try:
+                cp = ord(seq_bytes.decode('utf-8'))
+                codepoints.append(cp)
+            except:
+                continue
+
+        for i in range(len(codepoints) - 1):
+            bigram = (codepoints[i], codepoints[i + 1])
+            self._bigram_counts[bigram] += 1
+            self._total_bigrams += 1
+
+        for i in range(len(codepoints) - 2):
+            trigram = (codepoints[i], codepoints[i + 1], codepoints[i + 2])
+            self._trigram_counts[trigram] += 1
+            self._total_trigrams += 1
+
+        for (cp1, cp2), count in self._bigram_counts.items():
+            self._bigram_context[cp1][cp2] = count / self._total_bigrams
+        for (cp1, cp2, cp3), count in self._trigram_counts.items():
+            self._trigram_context[(cp1, cp2)][cp3] = count / self._total_trigrams
+
+    def _ngram_prediction(self, trajectory: List[Tuple[int, int]]) -> Dict[int, float]:
+        """Predict using n-gram statistics."""
+        probs = {}
+        if not self.use_ngrams or len(trajectory) < 2:
+            return {}
+
+        cps = [cp for cp, pos in trajectory]
+
+        if len(cps) >= 2:
+            prev2, prev1 = cps[-2], cps[-1]
+            trigram_key = (prev2, prev1)
+            if trigram_key in self._trigram_context:
+                for cp, prob in self._trigram_context[trigram_key].items():
+                    probs[cp] = probs.get(cp, 0) + prob * 0.6
+                return probs
+
+        prev1 = cps[-1]
+        if prev1 in self._bigram_context:
+            for cp, prob in self._bigram_context[prev1].items():
+                probs[cp] = probs.get(cp, 0) + prob * 0.4
+        return probs
+
+    def _combined_prediction(
+        self,
+        trajectory: List[Tuple[int, int]],
+        context_embedding: np.ndarray,
+        last_region: Optional[str] = None,
+    ) -> Dict[int, float]:
+        """Combine n-gram and embedding predictions."""
+        emb_probs = self._predict_from_embedding(context_embedding, last_region)
+        ngram_probs = self._ngram_prediction(trajectory)
+        if not ngram_probs:
+            return emb_probs
+
+        ngram_total = sum(ngram_probs.values())
+        if ngram_total > 0:
+            ngram_probs = {cp: p / ngram_total for cp, p in ngram_probs.items()}
+        emb_total = sum(emb_probs.values())
+        if emb_total > 0:
+            emb_probs = {cp: p / emb_total for cp, p in emb_probs.items()}
+
+        ngram_conf = min(1.0, self._total_trigrams / 10000)
+        alpha = 0.5 * ngram_conf
+
+        combined = {}
+        all_cps = set(list(ngram_probs.keys()) + list(emb_probs.keys()))
+        for cp in all_cps:
+            ngram_p = ngram_probs.get(cp, 0)
+            emb_p = emb_probs.get(cp, 0)
+            combined[cp] = alpha * ngram_p + (1 - alpha) * emb_p
+
+        total = sum(combined.values())
+        if total > 0:
+            combined = {cp: p / total for cp, p in combined.items()}
+        return combined
+
 
 class CharacterContinuationReader:
     """
@@ -460,8 +569,94 @@ class CharacterContinuationReader:
                 current_trajectory.append((cp, -1))
             except ValueError:
                 break
-        
+
         return ''.join(result)
+
+    # ============ N-GRAM LEARNING (V13) ============
+
+    def learn_ngrams(self, sequences: List[Tuple[bytes, int]]):
+        """Learn bigram and trigram statistics from sequences."""
+        if not self.use_ngrams:
+            return
+
+        codepoints = []
+        for seq_bytes, pos in sequences:
+            try:
+                cp = ord(seq_bytes.decode('utf-8'))
+                codepoints.append(cp)
+            except:
+                continue
+
+        for i in range(len(codepoints) - 1):
+            bigram = (codepoints[i], codepoints[i + 1])
+            self._bigram_counts[bigram] += 1
+            self._total_bigrams += 1
+
+        for i in range(len(codepoints) - 2):
+            trigram = (codepoints[i], codepoints[i + 1], codepoints[i + 2])
+            self._trigram_counts[trigram] += 1
+            self._total_trigrams += 1
+
+        for (cp1, cp2), count in self._bigram_counts.items():
+            self._bigram_context[cp1][cp2] = count / self._total_bigrams
+        for (cp1, cp2, cp3), count in self._trigram_counts.items():
+            self._trigram_context[(cp1, cp2)][cp3] = count / self._total_trigrams
+
+    def _ngram_prediction(self, trajectory: List[Tuple[int, int]]) -> Dict[int, float]:
+        """Predict using n-gram statistics."""
+        probs = {}
+        if not self.use_ngrams or len(trajectory) < 2:
+            return {}
+
+        cps = [cp for cp, pos in trajectory]
+
+        if len(cps) >= 2:
+            prev2, prev1 = cps[-2], cps[-1]
+            trigram_key = (prev2, prev1)
+            if trigram_key in self._trigram_context:
+                for cp, prob in self._trigram_context[trigram_key].items():
+                    probs[cp] = probs.get(cp, 0) + prob * 0.6
+                return probs
+
+        prev1 = cps[-1]
+        if prev1 in self._bigram_context:
+            for cp, prob in self._bigram_context[prev1].items():
+                probs[cp] = probs.get(cp, 0) + prob * 0.4
+        return probs
+
+    def _combined_prediction(
+        self,
+        trajectory: List[Tuple[int, int]],
+        context_embedding: np.ndarray,
+        last_region: Optional[str] = None,
+    ) -> Dict[int, float]:
+        """Combine n-gram and embedding predictions."""
+        emb_probs = self._predict_from_embedding(context_embedding, last_region)
+        ngram_probs = self._ngram_prediction(trajectory)
+        if not ngram_probs:
+            return emb_probs
+
+        ngram_total = sum(ngram_probs.values())
+        if ngram_total > 0:
+            ngram_probs = {cp: p / ngram_total for cp, p in ngram_probs.items()}
+        emb_total = sum(emb_probs.values())
+        if emb_total > 0:
+            emb_probs = {cp: p / emb_total for cp, p in emb_probs.items()}
+
+        ngram_conf = min(1.0, self._total_trigrams / 10000)
+        alpha = 0.5 * ngram_conf
+
+        combined = {}
+        all_cps = set(list(ngram_probs.keys()) + list(emb_probs.keys()))
+        for cp in all_cps:
+            ngram_p = ngram_probs.get(cp, 0)
+            emb_p = emb_probs.get(cp, 0)
+            combined[cp] = alpha * ngram_p + (1 - alpha) * emb_p
+
+        total = sum(combined.values())
+        if total > 0:
+            combined = {cp: p / total for cp, p in combined.items()}
+        return combined
 
 
 def create_continuation(manifold: CharacterManifold) -> CharacterGeometricContinuation:

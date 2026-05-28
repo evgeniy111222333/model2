@@ -158,6 +158,7 @@ class CharacterManifoldOptimized:
         batch_size: int = 50000,
         window_size: int = 3,
         svd_components: int = 10,
+        bloom_size: int = 50000,  # FIXED: larger for CJK support
     ):
         """
         Args:
@@ -167,6 +168,7 @@ class CharacterManifoldOptimized:
             batch_size: розмір batch для adaptive processing
             window_size: розмір вікна для co-occurrence
             svd_components: кількість SVD components
+            bloom_size: size для Bloom filter (bigger = less FP)
         """
         self.embedding_dim = embedding_dim
         self.use_fisher_metric = use_fisher_metric
@@ -174,6 +176,7 @@ class CharacterManifoldOptimized:
         self.batch_size = batch_size
         self.window_size = window_size
         self.svd_components = min(svd_components, embedding_dim - 2)
+        self.bloom_size = bloom_size  # FIXED: larger for CJK support
         
         # Hash-based indexing
         self.characters: Dict[int, CharacterPoint] = {}
@@ -258,7 +261,7 @@ class CharacterManifoldOptimized:
                     self.regions[region_name] = CharacterRegion(name=region_name)
                     self._region_codepoints[region_name] = set()
                     # Create Bloom filter for fast membership
-                    self._region_bloom_filters[region_name] = OptimizedBloomFilter()
+                    self._region_bloom_filters[region_name] = OptimizedBloomFilter(size=self.bloom_size)
                 
                 # Update region
                 self.regions[region_name].codepoints.update(codepoints)
@@ -375,11 +378,10 @@ class CharacterManifoldOptimized:
                         self._sparse_cooc[cp_i][cp_j] -= proj
         
         # Store eigenvectors as embeddings
-        for e in eigenvectors:
+        for comp_idx, e in enumerate(eigenvectors):
             for idx in range(n_chars):
                 cp = self._idx_to_codepoint.get(idx)
                 if cp is not None and cp in self.characters:
-                    comp_idx = eigenvectors.index(e)
                     if comp_idx + 2 < self.embedding_dim:
                         self.characters[cp].embedding[comp_idx + 2] = e[idx]
     
@@ -477,12 +479,10 @@ class CharacterManifoldOptimized:
             print("  [3/4] Building sparse co-occurrence...")
         self._build_sparse_cooc(sequences)
         
-        # Phase 4: Streaming SVD (skip for now if too slow)
+        # Phase 4: Streaming SVD (ENABLED - critical for semantic embeddings)
         if verbose:
-            print("  [4/4] Computing embeddings (fast mode)...")
-        # _streaming_power_iteration disabled for speed - embeddings stay initialized
-        # Phase 4: Streaming SVD disabled for speed
-        # self._streaming_power_iteration(n_components=self.svd_components)
+            print("  [4/4] Computing semantic embeddings via SVD...")
+        self._streaming_power_iteration(n_components=self.svd_components, n_iters=15)
         
         # Compute region transition probs
         for region in self.regions.values():
@@ -582,6 +582,125 @@ class CharacterManifoldOptimized:
             'n_transitions': total_transitions,
             'is_trained': self.is_trained,
         }
+    
+    # ============ INCREMENTAL LEARNING ============
+    
+    def add_character_incremental(self, char_bytes: bytes, position: int):
+        """
+        INCREMENTAL: Add single character without full retraining.
+        
+        Updates:
+        - Character index
+        - Sparse transitions (incremental update)
+        - Co-occurrence matrix (incremental)
+        """
+        try:
+            codepoint = ord(char_bytes.decode('utf-8'))
+        except:
+            return
+        
+        # Add to index if new
+        self._add_to_index(codepoint)
+        
+        if codepoint not in self.characters:
+            point = CharacterPoint(
+                codepoint=codepoint,
+                char_bytes=char_bytes,
+                char_str=char_bytes.decode('utf-8', errors='replace'),
+                region='',
+                embedding=self._init_embedding(codepoint),
+                position=position
+            )
+            self.characters[codepoint] = point
+        
+        return codepoint
+    
+    def add_transition_incremental(self, from_cp: int, to_cp: int):
+        """
+        INCREMENTAL: Update transition count without full recalculation.
+        
+        Uses online update formula for probability:
+        P_new = (count * P_old + 1) / (count + 1)
+        """
+        if from_cp not in self._sparse_transitions._out_counts:
+            self._sparse_transitions._out_counts[from_cp] = 0
+        
+        old_count = self._sparse_transitions._out_counts[from_cp]
+        old_prob = self._sparse_transitions.get_prob(from_cp, to_cp)
+        
+        # Online update
+        new_count = old_count + 1
+        new_prob = (old_count * old_prob + 1) / new_count if new_count > 0 else 1.0 / len(self.characters)
+        
+        # Update sparse transitions
+        self._sparse_transitions._transitions[from_cp][to_cp] = int(new_prob * new_count)
+        self._sparse_transitions._out_counts[from_cp] = new_count
+        
+        return new_prob
+    
+    def update_embedding_incremental(self, codepoint: int, new_embedding: np.ndarray, alpha: float = 0.1):
+        """
+        INCREMENTAL: Update character embedding via exponential moving average.
+        
+        emb_new = alpha * new_emb + (1 - alpha) * old_emb
+        
+        Args:
+            codepoint: character to update
+            new_embedding: new embedding vector
+            alpha: learning rate (0.1 = 10% new, 90% old)
+        """
+        if codepoint in self.characters:
+            old_emb = self.characters[codepoint].embedding
+            self.characters[codepoint].embedding = alpha * new_embedding + (1 - alpha) * old_emb
+    
+    def add_cooccurrence_incremental(self, cp1: int, cp2: int, weight: float = 1.0):
+        """
+        INCREMENTAL: Update co-occurrence without full rebuild.
+        """
+        if cp1 in self._codepoint_to_idx and cp2 in self._codepoint_to_idx:
+            self._sparse_cooc[cp1][cp2] += weight
+    
+    def process_sequence_incremental(self, sequences: List[Tuple[bytes, int]]):
+        """
+        INCREMENTAL: Process multiple characters and update all structures.
+        
+        More efficient than calling individual methods for each character.
+        """
+        codepoints = []
+        
+        # Phase 1: Add all characters
+        for char_bytes, position in sequences:
+            cp = self.add_character_incremental(char_bytes, position)
+            if cp is not None:
+                codepoints.append(cp)
+        
+        # Phase 2: Add all transitions in one pass
+        for i in range(len(codepoints) - 1):
+            self.add_transition_incremental(codepoints[i], codepoints[i + 1])
+        
+        # Phase 3: Add co-occurrences
+        half_window = self.window_size // 2
+        for i, cp_i in enumerate(codepoints):
+            for j in range(max(0, i - half_window), min(len(codepoints), i + half_window + 1)):
+                if i != j:
+                    dist = abs(i - j)
+                    weight = 1.0 / dist if dist > 0 else 1.0
+                    self.add_cooccurrence_incremental(cp_i, codepoints[j], weight)
+        
+        # Phase 4: Update region membership
+        for cp in codepoints:
+            region = self.get_region_for_cp(cp)
+            if region not in self.regions:
+                self.regions[region] = CharacterRegion(name=region)
+                self._region_codepoints[region] = set()
+                self._region_bloom_filters[region] = OptimizedBloomFilter(size=self.bloom_size)
+            
+            if cp not in self._region_codepoints[region]:
+                self._region_codepoints[region].add(cp)
+                self.regions[region].codepoints.add(cp)
+                self._region_bloom_filters[region].add(cp)
+        
+        return codepoints
 
 
 # Alias for compatibility
