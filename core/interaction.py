@@ -295,6 +295,7 @@ class FFTSpaceValueInteractionV7:
         embeddings: np.ndarray,
         use_adaptive_lambda: bool = True,
         top_k: Optional[int] = None,
+        chunk_size: int = 4096,
     ) -> np.ndarray:
         """Fully vectorized sliding-window pair field calculation in PyTorch to avoid CPU/GPU OOM."""
         N = V.shape[0]
@@ -310,59 +311,96 @@ class FFTSpaceValueInteractionV7:
         K = V_t.shape[1]
         r_max = min(max(1, int(self.lambda_base * 3)), max(N - 1, 1))
 
-        # Create window index tensor: (N, 2 * r_max + 1)
-        offsets = torch.arange(-r_max, r_max + 1, dtype=torch.long, device=device)
-        idx = torch.arange(N, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
-        
-        # Mask valid neighbors (those inside sequence bounds)
-        valid_mask = (idx >= 0) & (idx < N)
-        idx_clamped = torch.clamp(idx, 0, N - 1)
-
-        # Distance matrix (N, 2 * r_max + 1)
-        r = torch.abs(offsets.float().unsqueeze(0)).repeat(N, 1)
-
-        # Retrieve neighbor representations
-        h_neighbors = emb_t[idx_clamped]  # (N, 2 * r_max + 1, d)
-        V_neighbors = V_t[idx_clamped]    # (N, 2 * r_max + 1, K)
-        h_i = emb_t.unsqueeze(1)          # (N, 1, d)
-
-        # Compute adaptive lambda decay
         W_beta_interaction = self.lambda_net_W if isinstance(self.lambda_net_W, torch.Tensor) else torch.from_numpy(self.lambda_net_W).to(device)
         b_beta_interaction = self.lambda_net_b if isinstance(self.lambda_net_b, torch.Tensor) else torch.from_numpy(self.lambda_net_b).to(device)
-        
-        if use_adaptive_lambda:
-            term_i = torch.matmul(h_i, W_beta_interaction[0, :d].unsqueeze(1)).squeeze(-1)  # (N, 1)
-            term_j = torch.matmul(h_neighbors, W_beta_interaction[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (N, 2 * r_max + 1)
-            log_lambda = term_i + term_j + b_beta_interaction[0]
-            lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
-            alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
-        else:
-            alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
-
-        # Compute contextual affinity gamma
         A = self.A_attention if isinstance(self.A_attention, torch.Tensor) else torch.from_numpy(self.A_attention).to(device)
-        Ah_i = torch.matmul(h_i, A)  # (N, 1, d)
-        scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(d)  # (N, 2 * r_max + 1)
-        scores = torch.clamp(scores, -20.0, 20.0)
-        
-        # Softmax over window dimension with validity mask
-        scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
-        gamma = torch.softmax(scores, dim=-1)
 
-        # Weights: alpha * gamma
-        weights = alpha * gamma
-        # Mask out self-interaction
-        weights[:, r_max] = 0.0
-        weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+        offsets = torch.arange(-r_max, r_max + 1, dtype=torch.long, device=device)
+        r_offset = torch.abs(offsets.float().unsqueeze(0))
 
-        row_sum = weights.sum(dim=-1, keepdim=True)
-        normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+        if N <= chunk_size:
+            idx = torch.arange(N, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
+            valid_mask = (idx >= 0) & (idx < N)
+            idx_clamped = torch.clamp(idx, 0, N - 1)
+            r = r_offset.repeat(N, 1)
 
-        # Matrix multiply: sum over neighbors
-        W_adaptive = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
-        if not torch.all(torch.isfinite(W_adaptive)):
-            W_adaptive = torch.nan_to_num(W_adaptive, nan=0.0, posinf=1.0, neginf=-1.0)
+            h_neighbors = emb_t[idx_clamped]  # (N, 2 * r_max + 1, d)
+            V_neighbors = V_t[idx_clamped]    # (N, 2 * r_max + 1, K)
+            h_i = emb_t.unsqueeze(1)          # (N, 1, d)
 
+            if use_adaptive_lambda:
+                term_i = torch.matmul(h_i, W_beta_interaction[0, :d].unsqueeze(1)).squeeze(-1)  # (N, 1)
+                term_j = torch.matmul(h_neighbors, W_beta_interaction[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (N, 2 * r_max + 1)
+                log_lambda = term_i + term_j + b_beta_interaction[0]
+                lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
+                alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
+            else:
+                alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
+
+            Ah_i = torch.matmul(h_i, A)  # (N, 1, d)
+            scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(d)  # (N, 2 * r_max + 1)
+            scores = torch.clamp(scores, -20.0, 20.0)
+            
+            scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
+            gamma = torch.softmax(scores, dim=-1)
+
+            weights = alpha * gamma
+            weights[:, r_max] = 0.0
+            weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+
+            row_sum = weights.sum(dim=-1, keepdim=True)
+            normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+
+            W_adaptive = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
+            if not torch.all(torch.isfinite(W_adaptive)):
+                W_adaptive = torch.nan_to_num(W_adaptive, nan=0.0, posinf=1.0, neginf=-1.0)
+
+            return W_adaptive.detach().cpu().numpy()
+
+        chunks = []
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk_len = end - start
+
+            idx = torch.arange(start, end, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
+            valid_mask = (idx >= 0) & (idx < N)
+            idx_clamped = torch.clamp(idx, 0, N - 1)
+            
+            r = r_offset.repeat(chunk_len, 1)
+
+            h_neighbors = emb_t[idx_clamped]  # (chunk_len, 2 * r_max + 1, d)
+            V_neighbors = V_t[idx_clamped]    # (chunk_len, 2 * r_max + 1, K)
+            h_i = emb_t[start:end].unsqueeze(1)  # (chunk_len, 1, d)
+
+            if use_adaptive_lambda:
+                term_i = torch.matmul(h_i, W_beta_interaction[0, :d].unsqueeze(1)).squeeze(-1)  # (chunk_len, 1)
+                term_j = torch.matmul(h_neighbors, W_beta_interaction[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (chunk_len, 2 * r_max + 1)
+                log_lambda = term_i + term_j + b_beta_interaction[0]
+                lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
+                alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
+            else:
+                alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
+
+            Ah_i = torch.matmul(h_i, A)  # (chunk_len, 1, d)
+            scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(d)  # (chunk_len, 2 * r_max + 1)
+            scores = torch.clamp(scores, -20.0, 20.0)
+
+            scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
+            gamma = torch.softmax(scores, dim=-1)
+
+            weights = alpha * gamma
+            weights[:, r_max] = 0.0
+            weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+
+            row_sum = weights.sum(dim=-1, keepdim=True)
+            normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+
+            W_adaptive_chunk = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
+            if not torch.all(torch.isfinite(W_adaptive_chunk)):
+                W_adaptive_chunk = torch.nan_to_num(W_adaptive_chunk, nan=0.0, posinf=1.0, neginf=-1.0)
+            chunks.append(W_adaptive_chunk)
+
+        W_adaptive = torch.cat(chunks, dim=0)
         return W_adaptive.detach().cpu().numpy()
 
     def compute_interaction_field(
@@ -504,9 +542,11 @@ class TorchSpaceValueInteractionV8(torch.nn.Module):
         V: torch.Tensor,
         embeddings: torch.Tensor,
         use_adaptive_lambda: bool = True,
+        chunk_size: int = 4096,
     ) -> torch.Tensor:
         """
-        Векторизований прямий прохід з O(N * r_max) пам'яттю (sliding window).
+        Векторизований прямий прохід з O(N * r_max) пам'яттю (sliding window),
+        оптимізований через обробку чанками для запобігання OOM на великих N.
         """
         N = V.size(0)
         d = embeddings.size(1)
@@ -515,46 +555,94 @@ class TorchSpaceValueInteractionV8(torch.nn.Module):
         
         r_max = min(max(1, int(self.lambda_base * 3)), max(N - 1, 1))
 
-        # Create window index tensor: (N, 2 * r_max + 1)
+        # Якщо розмір послідовності невеликий, обробляємо в один прохід для максимальної швидкості
+        if N <= chunk_size:
+            offsets = torch.arange(-r_max, r_max + 1, dtype=torch.long, device=device)
+            idx = torch.arange(N, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
+            valid_mask = (idx >= 0) & (idx < N)
+            idx_clamped = torch.clamp(idx, 0, N - 1)
+            r = torch.abs(offsets.float().unsqueeze(0)).repeat(N, 1)
+
+            h_neighbors = embeddings[idx_clamped]  # (N, 2 * r_max + 1, d)
+            V_neighbors = V[idx_clamped]    # (N, 2 * r_max + 1, K)
+            h_i = embeddings.unsqueeze(1)          # (N, 1, d)
+
+            if use_adaptive_lambda:
+                term_i = torch.matmul(h_i, self.lambda_net_W[0, :d].unsqueeze(1)).squeeze(-1)  # (N, 1)
+                term_j = torch.matmul(h_neighbors, self.lambda_net_W[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (N, 2 * r_max + 1)
+                log_lambda = term_i + term_j + self.lambda_net_b[0]
+                lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
+                alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
+            else:
+                alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
+
+            Ah_i = torch.matmul(h_i, self.A_attention)  # (N, 1, d)
+            scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(max(d, 1))  # (N, 2 * r_max + 1)
+            scores = torch.clamp(scores, -20.0, 20.0)
+            
+            scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
+            gamma = torch.softmax(scores, dim=-1)
+
+            weights = alpha * gamma
+            weights[:, r_max] = 0.0
+            weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+
+            row_sum = weights.sum(dim=-1, keepdim=True)
+            normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+
+            W_interaction = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
+            if not torch.all(torch.isfinite(W_interaction)):
+                W_interaction = torch.nan_to_num(W_interaction, nan=0.0, posinf=1.0, neginf=-1.0)
+            return W_interaction
+
+        # Обробка чанками
+        chunks = []
         offsets = torch.arange(-r_max, r_max + 1, dtype=torch.long, device=device)
-        idx = torch.arange(N, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
-        
-        valid_mask = (idx >= 0) & (idx < N)
-        idx_clamped = torch.clamp(idx, 0, N - 1)
+        r_offset = torch.abs(offsets.float().unsqueeze(0))
 
-        r = torch.abs(offsets.float().unsqueeze(0)).repeat(N, 1)
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk_len = end - start
 
-        h_neighbors = embeddings[idx_clamped]  # (N, 2 * r_max + 1, d)
-        V_neighbors = V[idx_clamped]    # (N, 2 * r_max + 1, K)
-        h_i = embeddings.unsqueeze(1)          # (N, 1, d)
+            idx = torch.arange(start, end, dtype=torch.long, device=device).unsqueeze(1) + offsets.unsqueeze(0)
+            valid_mask = (idx >= 0) & (idx < N)
+            idx_clamped = torch.clamp(idx, 0, N - 1)
+            
+            r = r_offset.repeat(chunk_len, 1)
 
-        if use_adaptive_lambda:
-            term_i = torch.matmul(h_i, self.lambda_net_W[0, :d].unsqueeze(1)).squeeze(-1)  # (N, 1)
-            term_j = torch.matmul(h_neighbors, self.lambda_net_W[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (N, 2 * r_max + 1)
-            log_lambda = term_i + term_j + self.lambda_net_b[0]
-            lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
-            alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
-        else:
-            alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
+            h_neighbors = embeddings[idx_clamped]  # (chunk_len, 2 * r_max + 1, d)
+            V_neighbors = V[idx_clamped]    # (chunk_len, 2 * r_max + 1, K)
+            h_i = embeddings[start:end].unsqueeze(1)  # (chunk_len, 1, d)
 
-        Ah_i = torch.matmul(h_i, self.A_attention)  # (N, 1, d)
-        scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(max(d, 1))  # (N, 2 * r_max + 1)
-        scores = torch.clamp(scores, -20.0, 20.0)
-        
-        scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
-        gamma = torch.softmax(scores, dim=-1)
+            if use_adaptive_lambda:
+                term_i = torch.matmul(h_i, self.lambda_net_W[0, :d].unsqueeze(1)).squeeze(-1)  # (chunk_len, 1)
+                term_j = torch.matmul(h_neighbors, self.lambda_net_W[0, d:2*d].unsqueeze(1)).squeeze(-1)  # (chunk_len, 2 * r_max + 1)
+                log_lambda = term_i + term_j + self.lambda_net_b[0]
+                lambdas = torch.exp(torch.clamp(log_lambda, 0.5, 8.0))
+                alpha = torch.exp(-r / torch.clamp(lambdas, min=1e-6))
+            else:
+                alpha = torch.exp(-r / max(self.lambda_base, 1e-6))
 
-        weights = alpha * gamma
-        weights[:, r_max] = 0.0
-        weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+            Ah_i = torch.matmul(h_i, self.A_attention)  # (chunk_len, 1, d)
+            scores = torch.sum(Ah_i * h_neighbors, dim=-1) / np.sqrt(max(d, 1))  # (chunk_len, 2 * r_max + 1)
+            scores = torch.clamp(scores, -20.0, 20.0)
 
-        row_sum = weights.sum(dim=-1, keepdim=True)
-        normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+            scores = torch.where(valid_mask, scores, torch.tensor(-1e9, dtype=torch.float32, device=device))
+            gamma = torch.softmax(scores, dim=-1)
 
-        W_interaction = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
-        if not torch.all(torch.isfinite(W_interaction)):
-            W_interaction = torch.nan_to_num(W_interaction, nan=0.0, posinf=1.0, neginf=-1.0)
-        return W_interaction
+            weights = alpha * gamma
+            weights[:, r_max] = 0.0
+            weights = torch.where(valid_mask, weights, torch.tensor(0.0, dtype=torch.float32, device=device))
+
+            row_sum = weights.sum(dim=-1, keepdim=True)
+            normalized_weights = torch.where(row_sum > 1e-10, weights / row_sum, torch.zeros_like(weights))
+
+            W_interaction_chunk = torch.bmm(normalized_weights.unsqueeze(1), V_neighbors).squeeze(1)
+            if not torch.all(torch.isfinite(W_interaction_chunk)):
+                W_interaction_chunk = torch.nan_to_num(W_interaction_chunk, nan=0.0, posinf=1.0, neginf=-1.0)
+            chunks.append(W_interaction_chunk)
+
+        return torch.cat(chunks, dim=0)
 
     def compute_interaction_field(
         self,

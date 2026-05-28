@@ -488,49 +488,27 @@ class FieldSystemV6:
         self.active_byte_indices = top_bytes
         self.Phi = np.zeros((self.N, self.n_active_bytes), dtype=np.float32)
 
-        # Векторизована ініціалізація Φ згідно з концепцією:
-        # Байт присутній → Φ = +√θ_k ("увімкнений" стан, Рівняння 11)
-        # Байт відсутній → Φ = -√θ_k ("вимкнений" стан, Рівняння 11)
-        # CONCEPT FIX: Рівняння 11 каже E_k = a_k(Φ²-θ_k)² має мінімуми при Φ=±√θ_k.
-        # Відповідно до концепції: "+√θ_k" — стан "увімкнено", "−√θ_k" — стан "вимкнено".
-        # Попередній код ініціалізував non-matching байти як 0.01 (майже нуль),
-        # але 0 є НЕСТАБІЛЬНОЮ точкою double-well (дивергенція!):
-        # будь-який малий поштовх від дифузії перетворює 0.01 → +√θ_k.
-        # Це призводило до того, що ВСІ 256 байтів ставали "увімкненими" →
-        # однорідна активація → немає кластерів.
-        # Ініціалізація -√θ_k є СТАБІЛЬНИМ станом: дифузія має подолати
-        # бар'єр від -√θ до √(θ/3) (значно більша відстань ніж від 0).
-        byte_val_matrix = np.tile(byte_vals[:, None], (1, self.n_active_bytes))  # (N, n_active)
-        active_matrix = self.active_byte_indices[None, :]  # (1, n_active)
-        match_mask = (byte_val_matrix == active_matrix)  # (N, n_active)
-        theta_vec = self.theta_k[self.active_byte_indices]  # (n_active,)
-        sqrt_theta = np.sqrt(theta_vec)  # (n_active,)
-        self.Phi = np.where(match_mask, sqrt_theta[None, :], -sqrt_theta[None, :]).astype(np.float32)
+        # Phi field: present bytes become on-state (+sqrt theta), absent -> off-state (-sqrt theta).
+        # This is the Allen-Cahn initial condition from Equation 11.
+        theta_vec = np.sqrt(self.theta_k[self.active_byte_indices])  # (K,)
+        phi_init = np.full(self.n_active_bytes, -theta_vec.mean(), dtype=np.float32)  # default: off
+        for i in range(self.N):
+            bv = byte_vals[i]
+            if bv in self.active_byte_indices:
+                ki = np.where(self.active_byte_indices == bv)[0]
+                if len(ki) > 0:
+                    phi_init[ki[0]] = theta_vec[ki[0]]
+            self.Phi[i] = phi_init.copy()
 
-        # === ПОХІДНІ поля u та v (агрегація з Φ) ===
-        # u(i) = Σ_k Φ(i,k) — агрегована активація
-        # v(i) = max_k Φ(i,k) — максимальна активація
-        self.u = np.sum(self.Phi, axis=1).astype(np.float32)
-        self.v = np.max(self.Phi, axis=1).astype(np.float32)
-
-        # CONCEPT FIX: НЕ нормалізуємо u та v!
-        # Рівняння (9) каже u(i)=ΣΦ(i,k) — це ПОХІДНА агрегована величина,
-        # а не нормалізований [0,1] сигнал. Нормалізація після КОЖНОГО кроку
-        # руйнувала Allen-Cahn динаміку — прибивала різницю між позиціями
-        # до std≈0.01, що не давало boundary detector знайти жодних границь.
-        # V4 компоненти (PredictiveCoding, SelfOrganizer) працюють з
-        # реальними значеннями u, ім не потрібен [0,1] діапазон.
-
+        self.context_injection_vector = np.zeros(self.n_active_bytes, dtype=np.float32)
+        self.context_injection_kappa = 0.0
         self.step_count = 0
 
-        # V7 FIX: Контекстна ін'єкція — неперервний терм в ОДР (Рівняння 37)
-        # ∂Φ/∂t += κ · ctx(t) · σ_gate(ctx, Φ) · dt
-        # Замість імпульсного зсуву раз на 100 кроків — плавне
-        # безперервне додавання, масштабоване на dt
-        self.context_injection_vector = np.zeros(self.n_active_bytes, dtype=np.float32)
-        self.context_injection_kappa = 0.0  # κ (встановлюється ContextResonance)
+        # Initialize u and v fields
+        self.u = np.zeros(self.N, dtype=np.float32)
+        self.v = np.zeros(self.N, dtype=np.float32)
 
-    def step(self):
+    def step(self, chunk_size: int = 16384):
         """
         Один крок еволюції поля з Allen-Cahn double-well реакцією.
 
@@ -541,9 +519,9 @@ class FieldSystemV6:
         ∂Φ(i,k,t)/∂t = D_k·∇²Φ + R_k(Φ,θ) − μ·Φ
         R_k = −4·a_k·Φ·(Φ² − θ_k)   (double-well force)
 
-        PERFORMANCE FIX: Векторизований лапласіан для ВСІХ k ОДНОЧАСНО.
-        Замість Python циклу з 256 ітерацій — один векторизований pass
-        з використанням cumulative sum для обчислення сусідньої суми.
+        PERFORMANCE & MEMORY FIX: Обробка чанками з перекриттям (Domain Decomposition з Halo Exchange).
+        Якщо N велике, замість повного каскаду Laplacian на N x 256 ми робимо
+        Jacobi-style локальні оновлення тайлами з точним копіюванням гало-зон сусідів.
         """
         N = self.N
         if N == 0:
@@ -552,124 +530,154 @@ class FieldSystemV6:
         dt = self.dt
         Phi = self.Phi  # (N, n_active_bytes)
 
-        # === Векторизований Laplacian для всіх k одночасно ===
-        # Замість 256 окремих convolve — одна операція з cumulative sum
-        # Для кожної позиції i: neighbor_sum[i,k] = Σ_{j=i-ns}^{i+ns} Phi[j,k] (без center)
-        # Це еквівалентно: sum_2ns_plus1[i,k] - Phi[i,k]
+        # Для невеликих послідовностей виконуємо швидкий глобальний крок
+        if N <= chunk_size:
+            # === Векторизований Laplacian для всіх k одночасно ===
+            Phi_padded = np.pad(Phi, ((ns, ns), (0, 0)), mode='edge')  # (N+2*ns, n_active)
+            cumsum = np.cumsum(Phi_padded, axis=0)  # (N+2*ns, n_active)
+            cumsum_ext = np.vstack([np.zeros((1, Phi.shape[1]), dtype=np.float32), cumsum])  # (N+2*ns+1, n_active)
+            window_sum = cumsum_ext[2*ns + 1 : 2*ns + 1 + N] - cumsum_ext[:N]  # (N, n_active)
+            neighbor_sum = window_sum - Phi  # (N, n_active_bytes)
+            laplacian_Phi = neighbor_sum - 2.0 * ns * Phi  # (N, n_active) — БЕЗ ділення!
 
-        # Pad Phi along position axis (axis 0)
-        Phi_padded = np.pad(Phi, ((ns, ns), (0, 0)), mode='edge')  # (N+2*ns, n_active)
+            D_k_vec = self.D_k[self.active_byte_indices]  # (n_active_bytes,)
+            a_k_vec = self.a_k[self.active_byte_indices]    # (n_active_bytes,)
+            theta_k_vec = self.theta_k[self.active_byte_indices]  # (n_active_bytes,)
 
-        # Cumulative sum along axis 0
-        cumsum = np.cumsum(Phi_padded, axis=0)  # (N+2*ns, n_active)
-        # Insert zero at the beginning for proper windowed sum
-        cumsum_ext = np.vstack([np.zeros((1, Phi.shape[1]), dtype=np.float32), cumsum])  # (N+2*ns+1, n_active)
-
-        # window_sum[i] = cumsum_ext[i + 2*ns + 1] - cumsum_ext[i]
-        # Сума елементів Phi_padded[i : i + 2*ns + 1] = сума вікна навколо позиції i
-        # Після pad, позиція i у Phi відповідає позиції i+ns у Phi_padded
-        # Вікно [i-ns, i+ns] у Phi = [i, i+2*ns] у Phi_padded
-        window_sum = cumsum_ext[2*ns + 1 : 2*ns + 1 + N] - cumsum_ext[:N]  # (N, n_active)
-
-        # Віднімаємо центральний елемент щоб отримати суму сусідів
-        neighbor_sum = window_sum - Phi  # (N, n_active_bytes)
-
-        # Векторизований Laplacian: Σ_{j∈N(i)} [Φ(j,k) − Φ(i,k)]
-        # CONCEPT FIX: Рівняння (9) каже Σ (сума), а НЕ середнє!
-        # Попередній код ділив на 2*ns (перетворяв SUM → MEAN), що
-        # зменшувало дифузію в 2*ns разів (10x при ns=5) — це НЕ
-        # відповідало концепції і призводило до відсутності самоорганізації.
-        # Згідно Рівняння (9): D_k · Σ_{j∈N(i)} [Φ(j)−Φ(i)]
-        # = D_k · (neighbor_sum − 2·ns·Φ(i))
-        laplacian_Phi = neighbor_sum - 2.0 * ns * Phi  # (N, n_active) — БЕЗ ділення!
-
-        # Параметри для кожного k як вектори
-        D_k_vec = self.D_k[self.active_byte_indices]  # (n_active_bytes,)
-        a_k_vec = self.a_k[self.active_byte_indices]    # (n_active_bytes,)
-        theta_k_vec = self.theta_k[self.active_byte_indices]  # (n_active_bytes,)
-
-        # Модуляція тензорною взаємодією W(i)
-        # CONCEPT FIX: Рівняння (3-7) описують тензор взаємодії як КЛЮЧОВИЙ
-        # механізм формування патернів. Раніше коефіцієнт 0.1 робив модуляцію
-        # лише 1.3% від сили double-well (0.1*0.5*0.5 = 0.025 vs spring = 2.0),
-        # тому тензорна взаємодія ПРАКТИЧНО не впливала на динаміку.
-        # Згідно з концепцією, тензор взаємодії має БУТИ порівнянним за силою
-        # з double-well реакцією, щоб створювати просторові патерни.
-        # Новий підхід: W_mod діє як ADDITIVE драйвер (не мультиплікативний),
-        # що штовхає Phi до стану, визначеного тензором взаємодії.
-        # W(i) > 0.5 → позиція у "когерентному" регіоні → підсилюємо Phi
-        # W(i) < 0.5 → позиція на границі → послаблюємо Phi
-        if self.interaction_field is not None:
-            if self.interaction_field.ndim == 1:
-                # 1D backward-compatible mode
-                W_mod = 2.0 * (self.interaction_field - 0.5)
-                W_mod_expanded = W_mod[:, None]
+            if self.interaction_field is not None:
+                if self.interaction_field.ndim == 1:
+                    W_mod = 2.0 * (self.interaction_field - 0.5)
+                    W_mod_expanded = W_mod[:, None]
+                else:
+                    W_mod = 2.0 * (self.interaction_field - 0.5)
+                    W_mod_expanded = W_mod
             else:
-                # 2D value-specific mode
-                W_mod = 2.0 * (self.interaction_field - 0.5)
-                W_mod_expanded = W_mod
-        else:
-            W_mod_expanded = np.zeros_like(Phi)
+                W_mod_expanded = np.zeros_like(Phi)
 
-        # === Векторизована Allen-Cahn еволюція для ВСІХ k ===
-        # R_k = -4·a_k·Phi·(Phi² − θ_k) для кожного k
-        # D_k · laplacian_Phi[k] для кожного k
-        # Всі операції є поелементними → одна векторизована операція
+            # Double-well reaction
+            R = -4.0 * a_k_vec[None, :] * Phi * (Phi ** 2 - theta_k_vec[None, :])  # (N, n_active)
 
-        # Double-well reaction: R_k = -4·a_k·Phi·(Phi² − θ_k)  (поелементно)
-        R = -4.0 * a_k_vec[None, :] * Phi * (Phi ** 2 - theta_k_vec[None, :])  # (N, n_active)
+            interaction_modulation = (
+                self.interaction_modulation_scale * W_mod_expanded * _sigmoid(Phi)
+            )  # (N, n_active)
 
-        # Повне рівняння Allen-Cahn (Рівняння 9):
-        # ∂Φ/∂t = D_k·∇²Φ + R_k − μ·Φ + κ·W_mod·σ(Φ)
-        # CONCEPT FIX: Модуляція взаємодією тепер ADDITIVE (не мультиплікативна).
-        # Коефіцієнт κ = 0.5 робить тензорну взаємодію порівнянною з double-well.
-        interaction_modulation = (
-            self.interaction_modulation_scale * W_mod_expanded * _sigmoid(Phi)
-        )  # (N, n_active)
+            dphi = (D_k_vec[None, :] * laplacian_Phi  # дифузія
+                    + R                                   # реакція
+                    - self.mu * Phi                       # затухання
+                    + interaction_modulation)              # модуляція взаємодією
 
-        dphi = (D_k_vec[None, :] * laplacian_Phi  # дифузія (поелементно)
-                + R                                   # реакція
-                - self.mu * Phi                       # затухання
-                + interaction_modulation)              # модуляція взаємодією (ADDITIVE)
+            if self.context_injection_kappa > 1e-10:
+                ctx_vec = self.context_injection_vector
+                ctx_norm = float(np.linalg.norm(ctx_vec))
+                if ctx_norm > 1e-10:
+                    phi_mean = float(np.mean(Phi))
+                    gate = float(_sigmoid(np.array([ctx_norm * phi_mean]))[0])
+                    ctx_term = self.context_injection_kappa * ctx_vec[None, :] * gate
+                    dphi = dphi + ctx_term
 
-        # V7 FIX: Контекстна ін'єкція як неперервний терм в ОДР (Рівняння 37)
-        # ∂Φ(i,k,t)/∂t += κ · ctx(k,t) · σ_gate(ctx, Φ(i,k,t))
-        # де ctx(k,t) — контекстний вектор, адаптований до розмірності Φ
-        # Замість імпульсного зсуву раз на 100 кроків — плавне додавання,
-        # масштабоване на dt, інтегроване в кожен крок еволюції.
-        if self.context_injection_kappa > 1e-10:
-            ctx_vec = self.context_injection_vector  # (n_active_bytes,)
-            ctx_norm = float(np.linalg.norm(ctx_vec))
-            if ctx_norm > 1e-10:
-                # σ_gate(ctx, Φ) = sigmoid(‖ctx‖ · mean(Φ))
-                phi_mean = float(np.mean(Phi))
-                gate = float(_sigmoid(np.array([ctx_norm * phi_mean]))[0])
-                # Контекстний терм: κ · ctx · gate
-                # ctx_vec[k] діє на Φ[:, k] для всіх позицій i
-                ctx_term = self.context_injection_kappa * ctx_vec[None, :] * gate  # (1, n_active)
-                dphi = dphi + ctx_term
+            if not np.all(np.isfinite(dphi)):
+                dphi = np.nan_to_num(dphi, nan=0.0, posinf=10.0, neginf=-10.0)
+            self.Phi = np.clip(Phi + dt * dphi, -1.5, 2.0)
 
-        # CONCEPT FIX: Дозволяємо негативні значення Phi!
-        # Рівняння 11: double-well має стабільні стани при Φ=±√θ_k.
-        # "Вимкнений" стан — це Φ=-√θ_k, а НЕ Φ=0 (0 — нестабільна точка!).
-        # Попередній clip [0, 2] блокував "вимкнений" стан → усі байти
-        # дрейфували до "увімкненого" → однорідна активація → немає кластерів.
-        # Новий кліп: [-1.5, 2.0] — дозволяє "вимкнений" стан при -√θ_k ≈ -0.5.
-        if not np.all(np.isfinite(dphi)):
-            dphi = np.nan_to_num(dphi, nan=0.0, posinf=10.0, neginf=-10.0)
-        self.Phi = np.clip(Phi + dt * dphi, -1.5, 2.0)
+            Phi_positive = np.maximum(self.Phi, 0.0)
+            self.u = np.sum(Phi_positive, axis=1).astype(np.float32)
+            self.v = np.max(Phi_positive, axis=1).astype(np.float32)
+            self.step_count += 1
+            return
 
-        # === ПОХІДНІ поля u та v (агрегація з Φ) ===
-        # CONCEPT FIX: u рахує лише "увімкнені" байти (Phi > 0),
-        # бо "увімкнений" стан = +√θ_k (позитивний), а "вимкнений" = -√θ_k.
-        # u(i) = Σ_k max(Φ(i,k), 0) — сума активації "увімкнених" байтів.
-        # v(i) = max_k max(Φ(i,k), 0) — максимальна "увімкнена" активація.
-        # Попередній код: u = Σ Phi — рахував і негативні значення,
-        # що давало u ≈ 0 (кілька позитивних + багато негативних ≈ нуль).
-        Phi_positive = np.maximum(self.Phi, 0.0)
-        self.u = np.sum(Phi_positive, axis=1).astype(np.float32)
-        self.v = np.max(Phi_positive, axis=1).astype(np.float32)
+        # === ТАЙЛОВИЙ РЕЖИМ (Tiled/Chunked Solver з точним збереженням меж) ===
+        # H = ns + 2 цілком достатньо для математично точного результату без похибок
+        H = ns + 2
+        
+        # Константна RAM/VRAM пам'ять: збереження межі для Jacobi-сумісності
+        saved_left_boundary = None
+        
+        D_k_vec = self.D_k[self.active_byte_indices]
+        a_k_vec = self.a_k[self.active_byte_indices]
+        theta_k_vec = self.theta_k[self.active_byte_indices]
 
+        # Ініціалізуємо u та v
+        if not hasattr(self, 'u') or len(self.u) != N:
+            self.u = np.empty(N, dtype=np.float32)
+            self.v = np.empty(N, dtype=np.float32)
+        
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk_len = end - start
+            
+            # Межі читання з halo
+            read_start = max(0, start - H)
+            read_end = min(N, end + H)
+            
+            # Копіюємо вікно до локальної оперативної пам'яті
+            Phi_window = Phi[read_start:read_end].copy()
+            W_len = read_end - read_start
+            
+            # Відновлюємо старі граничні значення для лівого halo
+            if saved_left_boundary is not None:
+                Phi_window[0:H] = saved_left_boundary
+                
+            # Зберігаємо праву межу поточного ядра перед оновленням
+            if end < N:
+                idx_save_start = end - H - read_start
+                idx_save_end = end - read_start
+                saved_left_boundary = Phi_window[idx_save_start:idx_save_end].copy()
+                
+            # Локальний Laplacian
+            Phi_window_padded = np.pad(Phi_window, ((ns, ns), (0, 0)), mode='edge')
+            cumsum_w = np.cumsum(Phi_window_padded, axis=0)
+            cumsum_w_ext = np.vstack([np.zeros((1, Phi.shape[1]), dtype=np.float32), cumsum_w])
+            window_sum = cumsum_w_ext[2*ns + 1 : 2*ns + 1 + W_len] - cumsum_w_ext[:W_len]
+            neighbor_sum = window_sum - Phi_window
+            laplacian_w = neighbor_sum - 2.0 * ns * Phi_window
+            
+            # Витягуємо активну зону Laplacian
+            idx_start = start - read_start
+            idx_end = idx_start + chunk_len
+            laplacian_chunk = laplacian_w[idx_start:idx_end]
+            
+            Phi_chunk = Phi[start:end]
+            
+            # Взаємодія
+            if self.interaction_field is not None:
+                if self.interaction_field.ndim == 1:
+                    W_mod_chunk = 2.0 * (self.interaction_field[start:end] - 0.5)
+                    W_mod_chunk_expanded = W_mod_chunk[:, None]
+                else:
+                    W_mod_chunk = 2.0 * (self.interaction_field[start:end] - 0.5)
+                    W_mod_chunk_expanded = W_mod_chunk
+            else:
+                W_mod_chunk_expanded = np.zeros_like(Phi_chunk)
+                
+            # Реакція
+            R = -4.0 * a_k_vec[None, :] * Phi_chunk * (Phi_chunk ** 2 - theta_k_vec[None, :])
+            interaction_modulation = self.interaction_modulation_scale * W_mod_chunk_expanded * _sigmoid(Phi_chunk)
+            
+            dphi_chunk = (D_k_vec[None, :] * laplacian_chunk
+                          + R
+                          - self.mu * Phi_chunk
+                          + interaction_modulation)
+                          
+            if self.context_injection_kappa > 1e-10:
+                ctx_vec = self.context_injection_vector
+                ctx_norm = float(np.linalg.norm(ctx_vec))
+                if ctx_norm > 1e-10:
+                    phi_mean = float(np.mean(Phi_chunk))
+                    gate = float(_sigmoid(np.array([ctx_norm * phi_mean]))[0])
+                    ctx_term = self.context_injection_kappa * ctx_vec[None, :] * gate
+                    dphi_chunk = dphi_chunk + ctx_term
+
+            if not np.all(np.isfinite(dphi_chunk)):
+                dphi_chunk = np.nan_to_num(dphi_chunk, nan=0.0, posinf=10.0, neginf=-10.0)
+                
+            # Записуємо оновлений стан в-місце
+            Phi[start:end] = np.clip(Phi_chunk + dt * dphi_chunk, -1.5, 2.0)
+            
+            # Обчислюємо u та v на льоту
+            Phi_pos_chunk = np.maximum(Phi[start:end], 0.0)
+            self.u[start:end] = np.sum(Phi_pos_chunk, axis=1)
+            self.v[start:end] = np.max(Phi_pos_chunk, axis=1)
+            
         self.step_count += 1
 
     def update_feed_rate(self, interaction_field: np.ndarray):

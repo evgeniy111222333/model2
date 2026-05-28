@@ -2,6 +2,95 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any, Union
 from bcs.utils import _kl_divergence
 
+
+def _benjamini_hochberg(p_values: List[float], fdr_level: float = 0.05) -> List[bool]:
+    """
+    Benjamini-Hochberg procedure for controlling False Discovery Rate.
+    
+    Unlike Bonferroni (controls FWER), BH controls FDR - less conservative
+    and more appropriate for exploratory token discovery.
+    
+    Algorithm:
+    1. Sort p-values: p(1) <= p(2) <= ... <= p(m)
+    2. Find largest k where p(k) <= k/m * q
+    3. Reject null for tests 1..k
+    
+    Args:
+        p_values: list of p-values
+        fdr_level: desired false discovery rate (default 0.05)
+        
+    Returns:
+        List of booleans indicating which tests are significant
+    """
+    m = len(p_values)
+    if m == 0:
+        return []
+    
+    if m == 1:
+        return [p_values[0] <= fdr_level]
+    
+    # Sort indices by p-value
+    sorted_indices = sorted(range(m), key=lambda i: p_values[i])
+    
+    # Find largest k where p(k) <= k/m * q
+    threshold = None
+    for idx, sorted_pos in enumerate(sorted_indices):
+        k = idx + 1  # 1-indexed
+        threshold_k = k / m * fdr_level
+        if p_values[sorted_pos] <= threshold_k:
+            threshold = threshold_k
+        else:
+            break  # further p-values will be even larger
+    
+    # Mark tests as significant if p <= threshold
+    is_significant = []
+    for p in p_values:
+        if threshold is not None:
+            is_significant.append(p <= threshold)
+        else:
+            is_significant.append(False)
+    
+    return is_significant
+
+
+def _holm_bonferroni(p_values: List[float], alpha: float = 0.05) -> List[bool]:
+    """
+    Holm-Bonferroni method (uniformly more powerful than classic Bonferroni).
+    
+    Less conservative than classic Bonferroni while still controlling FWER.
+    
+    Args:
+        p_values: list of p-values
+        alpha: significance level (default 0.05)
+        
+    Returns:
+        List of booleans indicating which tests are significant
+    """
+    m = len(p_values)
+    if m == 0:
+        return []
+    
+    # Sort indices by p-value
+    sorted_indices = sorted(range(m), key=lambda i: p_values[i])
+    
+    # Find first k where p(k) > alpha/(m - k + 1)
+    cutoff_idx = m  # by default, all are significant
+    
+    for idx, orig_idx in enumerate(sorted_indices):
+        k = idx + 1  # 1-indexed
+        threshold = alpha / (m - k + 1)
+        if p_values[orig_idx] > threshold:
+            cutoff_idx = idx
+            break
+    
+    # Tests 0..cutoff_idx-1 are significant
+    is_significant = [False] * m
+    for i in range(cutoff_idx):
+        is_significant[sorted_indices[i]] = True
+    
+    return is_significant
+
+
 class EmergentTokenDiscovery:
     """
     Виявлення емерджентних багатобайтових токенів.
@@ -342,9 +431,21 @@ class EmergentTokenDiscovery:
         clusters: List[Dict],
         pc=None,
         u_field: Optional[np.ndarray] = None,
+        use_bh: bool = True,
     ) -> List[Dict]:
         """
-        Повний цикл виявлення емерджентних токенів зі статистикою Bonferroni.
+        Повний цикл виявлення емерджентних токенів з FDR control.
+        
+        Uses Benjamini-Hochberg procedure (default) instead of Bonferroni.
+        BH is less conservative and controls False Discovery Rate, making it
+        more appropriate for exploratory token discovery on small data.
+        
+        Args:
+            substrate: ByteSubstrate
+            clusters: detected clusters
+            pc: PredictiveCoding for predictive power
+            u_field: optional field state
+            use_bh: if True (default), use Benjamini-Hochberg; if False, use Holm-Bonferroni
         """
         # 1. Виявлення кандидатів
         candidates = self.discover_candidates(substrate, clusters)
@@ -369,10 +470,10 @@ class EmergentTokenDiscovery:
 
             prefiltered_candidates.append((token_bytes, info, info_gain))
 
-        m = len(prefiltered_candidates)  # Кількість тестів для Bonferroni correction
+        m = len(prefiltered_candidates)  # Кількість тестів
 
-        # 3. Оцінка та статистичний аналіз кожного кандидата
-        tokens = []
+        # 3. Оцінка кожного кандидата
+        candidate_results = []
         for token_bytes, info, info_gain in prefiltered_candidates:
             # Предиктивна сила на реальному полі u_field
             pred_power = self.compute_predictive_power(token_bytes, substrate, pc, u_field=u_field)
@@ -382,10 +483,46 @@ class EmergentTokenDiscovery:
 
             # Статистичний тест (Permutation Test)
             p_value = self.compute_permutation_p_value(token_bytes, substrate, info_gain, n_permutations=50)
+
+            candidate_results.append({
+                'token_bytes': token_bytes,
+                'info': info,
+                'info_gain': info_gain,
+                'pred_power': pred_power,
+                'cluster_diversity': cluster_diversity,
+                'p_value': p_value,
+            })
+
+        # 4. FDR control: apply BH or Holm procedure to all p-values
+        p_values = [r['p_value'] for r in candidate_results]
+        
+        if m > 0 and use_bh:
+            # Benjamini-Hochberg: less conservative, controls FDR
+            significance = _benjamini_hochberg(p_values, fdr_level=0.05)
+        elif m > 0:
+            # Holm-Bonferroni: less conservative than classic Bonferroni, controls FWER
+            significance = _holm_bonferroni(p_values, alpha=0.05)
+        else:
+            significance = []
+
+        # 5. Build tokens with adjusted p-values and significance
+        tokens = []
+        for idx, result in enumerate(candidate_results):
+            token_bytes = result['token_bytes']
+            info = result['info']
+            info_gain = result['info_gain']
+            pred_power = result['pred_power']
+            cluster_diversity = result['cluster_diversity']
+            p_value = result['p_value']
+            is_significant = significance[idx] if idx < len(significance) else False
             
-            # Bonferroni Correction
-            p_value_adjusted = min(p_value * m, 1.0)
-            is_significant = p_value_adjusted < 0.05
+            # Adjusted p-value for BH: min of (original * m / rank, 1.0)
+            # For Holm: already encoded in the significance decision
+            rank = idx + 1  # sorted by p-value
+            if use_bh and m > 0:
+                p_value_adjusted = min(p_value * m / rank, 1.0)
+            else:
+                p_value_adjusted = p_value  # Holm doesn't produce adjusted values directly
 
             # Композитна оцінка якості з урахуванням статистичної значущості
             sig_multiplier = 1.0 if is_significant else 0.5
@@ -417,10 +554,10 @@ class EmergentTokenDiscovery:
 
             tokens.append(token_entry)
 
-        # 4. Сортування за якістю
+        # 6. Сортування за якістю
         tokens.sort(key=lambda t: t['quality'], reverse=True)
 
-        # 5. Видалення підтокенів
+        # 7. Видалення підтокенів
         filtered_tokens = self._remove_subtokens(tokens)
 
         self.discovered_tokens = filtered_tokens

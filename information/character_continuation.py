@@ -147,6 +147,12 @@ class CharacterGeometricContinuation:
                 region_hint=region_hint
             )
         
+        # KEY FIX: Apply script filtering as FINAL safeguard
+        # This catches ALL prediction paths (n-gram, embedding, or fallback)
+        allowed_scripts = self._get_script_filter(recent)
+        if allowed_scripts:
+            next_char_probs = self._filter_by_script(next_char_probs, allowed_scripts)
+        
         return next_char_probs
     
     def _compute_novelties(self, char_points: List[CharacterPoint]) -> List[float]:
@@ -217,15 +223,44 @@ class CharacterGeometricContinuation:
         context_embedding: np.ndarray,
         last_region: Optional[str] = None,
         region_hint: Optional[str] = None,
+        active_script: Optional[str] = None,
     ) -> Dict[int, float]:
         """
         Predict next characters from aggregated embedding.
+        
+        KEY FIX: Applies script-aware biasing based on active script.
+        After space/punct (universal transitions), prefers Latin over Cyrillic
+        if the previous word was Latin, and vice versa.
         """
-        # Get candidates from regions
+        if not self.manifold:
+            return self._uniform_distribution()
+        
+        # If no active_script provided, detect it from manifold
+        if active_script is None:
+            # Default based on last_region
+            if last_region and 'cyrillic' in last_region:
+                active_script = 'cyrillic'
+            elif last_region and 'latin' in last_region:
+                active_script = 'latin'
+            else:
+                active_script = 'ascii'
+        
+        # Get script-filtered candidates first
         candidates = set()
         
-        # Preferred region
-        preferred_region = region_hint or last_region or 'cyrillic_lower'
+        # Preferred region based on script
+        if region_hint:
+            preferred_region = region_hint
+        elif last_region:
+            preferred_region = last_region
+        else:
+            # Infer from script
+            if active_script == 'cyrillic':
+                preferred_region = 'cyrillic_lower'
+            elif active_script == 'latin':
+                preferred_region = 'ascii'
+            else:
+                preferred_region = 'ascii'
         
         if preferred_region in self.manifold.regions:
             candidates.update(self.manifold.regions[preferred_region].codepoints)
@@ -266,8 +301,12 @@ class CharacterGeometricContinuation:
             # Embedding similarity
             emb_sim = np.exp(-dist * 2.0)
             
-            # Combined probability
-            prob = 0.4 * emb_sim + 0.3 * trans_prob + 0.3 * (1.0 / (1.0 + dist))
+            # Script bias: reward characters that match active script
+            char_script = self.manifold.get_script_for_cp(cp)
+            script_match = 1.0 if char_script == active_script else 0.3
+            
+            # Combined probability with script bias
+            prob = (0.35 * emb_sim + 0.25 * trans_prob + 0.25 * (1.0 / (1.0 + dist))) * script_match
             
             probs[cp] = prob
         
@@ -584,6 +623,83 @@ class CharacterGeometricContinuation:
 
         return probs
 
+    def _get_script_filter(
+        self,
+        trajectory: List[Tuple[int, int]],
+    ) -> set:
+        """
+        Get allowed scripts for continuation based on active script in trajectory.
+        
+        This is the KEY FIX: prevents Latin → Cyrillic and other impossible
+        script transitions during character generation.
+        
+        CRITICAL RULE: Space and punctuation are universal transition points.
+        After a space/punct, ANY script is allowed (start of new word/sentence).
+        
+        Args:
+            trajectory: List[(codepoint, position)]
+            
+        Returns:
+            Set of allowed script names
+        """
+        if not self.manifold:
+            return set()  # No filtering
+        
+        if not trajectory:
+            return set()
+        
+        last_cp = trajectory[-1][0]
+        last_script = self.manifold.get_script_for_cp(last_cp)
+        
+        # SPACE and PUNCTUATION are universal transition points!
+        # After a space/punct, ANY script is allowed — this enables new words.
+        if last_script in {'space', 'punct', 'ascii'}:
+            # After space/punct: return universal set (all scripts allowed)
+            # This is critical for text like "Hello world" where after space,
+            # both Latin and Cyrillic should be equally possible.
+            return self.manifold.get_allowed_next_scripts('space')
+        
+        # For letter scripts (cyrillic, latin, etc.), use normal transition rules
+        return self.manifold.get_allowed_next_scripts(last_script)
+    
+    def _filter_by_script(
+        self,
+        probs: Dict[int, float],
+        allowed_scripts: set,
+    ) -> Dict[int, float]:
+        """
+        Filter probabilities by allowed scripts.
+        
+        Characters from disallowed scripts get zero probability,
+        then the distribution is renormalized.
+        
+        Args:
+            probs: {codepoint: probability}
+            allowed_scripts: set of script names that are allowed
+            
+        Returns:
+            Filtered and renormalized probabilities
+        """
+        if not self.manifold:
+            return probs
+        
+        # Filter
+        filtered = {}
+        for cp, p in probs.items():
+            script = self.manifold.get_script_for_cp(cp)
+            if script in allowed_scripts or not allowed_scripts:
+                filtered[cp] = p
+        
+        # Renormalize if we lost mass
+        total = sum(filtered.values())
+        if total > 0 and total < sum(probs.values()):
+            filtered = {cp: p / total for cp, p in filtered.items()}
+        elif total == 0:
+            # No candidates in allowed scripts - fall back to original
+            return probs
+        
+        return filtered
+    
     def _combined_prediction(
         self,
         trajectory: List[Tuple[int, int]],
@@ -597,55 +713,86 @@ class CharacterGeometricContinuation:
         - N-gram confidence (data coverage)
         - Embedding confidence (manifold certainty)
         - Entropy signal (prediction uncertainty)
+        
+        KEY FIX: Detects active script from trajectory and passes it to
+        _predict_from_embedding for script-aware biasing.
+        
+        CRITICAL: N-gram predictions are ALSO filtered by script to prevent
+        impossible script transitions (e.g., Cyrillic n-gram suggesting Latin).
         """
-        emb_probs = self._predict_from_embedding(context_embedding, last_region)
+        # Detect active script from trajectory
+        active_script = self.manifold.get_active_script(trajectory) if self.manifold else 'ascii'
+        
+        emb_probs = self._predict_from_embedding(
+            context_embedding, 
+            last_region,
+            active_script=active_script
+        )
         ngram_probs = self._ngram_prediction(trajectory)
+        
+        # Apply script filtering to n-gram predictions
+        # This prevents n-gram from suggesting impossible script transitions
+        if active_script and ngram_probs:
+            allowed_scripts = self.manifold.get_allowed_next_scripts(active_script) if self.manifold else None
+            if allowed_scripts:
+                filtered_ngram = {}
+                for cp, p in ngram_probs.items():
+                    char_script = self.manifold.get_script_for_cp(cp)
+                    if char_script == active_script or char_script in {'punct', 'space', 'ascii', 'control'}:
+                        filtered_ngram[cp] = p
+                if filtered_ngram:  # Only use filtered if we have candidates
+                    ngram_probs = filtered_ngram
 
         if not ngram_probs:
-            return emb_probs
-        if not emb_probs:
-            return ngram_probs
+            result = emb_probs
+        elif not emb_probs:
+            result = ngram_probs
+        else:
+            # Normalize
+            ngram_total = sum(ngram_probs.values())
+            if ngram_total > 0:
+                ngram_probs = {cp: p / ngram_total for cp, p in ngram_probs.items()}
+            emb_total = sum(emb_probs.values())
+            if emb_total > 0:
+                emb_probs = {cp: p / emb_total for cp, p in emb_probs.items()}
 
-        # Normalize
-        ngram_total = sum(ngram_probs.values())
-        if ngram_total > 0:
-            ngram_probs = {cp: p / ngram_total for cp, p in ngram_probs.items()}
-        emb_total = sum(emb_probs.values())
-        if emb_total > 0:
-            emb_probs = {cp: p / emb_total for cp, p in emb_probs.items()}
+            # Confidence scores
+            ngram_conf = self._compute_ngram_confidence(trajectory)
+            emb_conf = self._compute_embedding_confidence(emb_probs)
 
-        # Confidence scores
-        ngram_conf = self._compute_ngram_confidence(trajectory)
-        emb_conf = self._compute_embedding_confidence(emb_probs)
+            # Entropy modulation: high entropy -> trust embedding more
+            entropy_factor = 1.0 - min(1.0, self._recent_entropy / np.log(256))
 
-        # Entropy modulation: high entropy -> trust embedding more
-        entropy_factor = 1.0 - min(1.0, self._recent_entropy / np.log(256))
+            # Learned weights with entropy modulation
+            w_ngram = self._ngram_weight * ngram_conf * (1.0 + entropy_factor * 0.5)
+            w_emb = self._emb_weight * emb_conf * (1.0 - entropy_factor * 0.3)
 
-        # Learned weights with entropy modulation
-        w_ngram = self._ngram_weight * ngram_conf * (1.0 + entropy_factor * 0.5)
-        w_emb = self._emb_weight * emb_conf * (1.0 - entropy_factor * 0.3)
+            total_w = w_ngram + w_emb + 1e-10
+            w_ngram /= total_w
+            w_emb /= total_w
 
-        total_w = w_ngram + w_emb + 1e-10
-        w_ngram /= total_w
-        w_emb /= total_w
+            # Log-linear interpolation
+            combined_scores = {}
+            all_cps = set(list(ngram_probs.keys()) + list(emb_probs.keys()))
 
-        # Log-linear interpolation
-        combined_scores = {}
-        all_cps = set(list(ngram_probs.keys()) + list(emb_probs.keys()))
+            for cp in all_cps:
+                ngram_p = ngram_probs.get(cp, 1e-10)
+                emb_p = emb_probs.get(cp, 1e-10)
+                log_combined = w_ngram * np.log(ngram_p) + w_emb * np.log(emb_p)
+                combined_scores[cp] = np.exp(log_combined)
 
-        for cp in all_cps:
-            ngram_p = ngram_probs.get(cp, 1e-10)
-            emb_p = emb_probs.get(cp, 1e-10)
-            log_combined = w_ngram * np.log(ngram_p) + w_emb * np.log(emb_p)
-            combined_scores[cp] = np.exp(log_combined)
+            total = sum(combined_scores.values())
+            result = {cp: score / total for cp, score in combined_scores.items()} if total > 0 else emb_probs
 
-        total = sum(combined_scores.values())
-        combined = {cp: score / total for cp, score in combined_scores.items()} if total > 0 else emb_probs
-
-        # Slow online weight adaptation
-        self._adapt_weights(emb_probs, ngram_probs, combined, trajectory)
-
-        return combined
+            # Slow online weight adaptation
+            self._adapt_weights(emb_probs, ngram_probs, result, trajectory)
+        
+        # KEY FIX: Apply script filtering
+        allowed_scripts = self._get_script_filter(trajectory)
+        if allowed_scripts:
+            result = self._filter_by_script(result, allowed_scripts)
+        
+        return result
 
     def _compute_ngram_confidence(self, trajectory: List[Tuple[int, int]]) -> float:
         """N-gram confidence: coverage of recent context."""

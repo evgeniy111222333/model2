@@ -8,6 +8,218 @@ from bcs.core.field import PredictionErrorLoop
 from bcs.information.conversion import ConversionLayersV3
 from bcs.perception.predictive import PredictiveCoding
 
+
+def _is_utf8_lead_byte(b: int) -> bool:
+    """Check if byte is a valid UTF-8 lead byte (start of sequence)."""
+    return (b >= 0xC0 and b <= 0xDF) or (b >= 0xE0 and b <= 0xEF) or (b >= 0xF0 and b <= 0xF4) or b < 0x80
+
+
+def _is_utf8_continuation_byte(b: int) -> bool:
+    """Check if byte is a UTF-8 continuation byte."""
+    return 0x80 <= b <= 0xBF
+
+
+def _find_utf8_boundary(near: int, direction: int, data: bytes, max_search: int = 10) -> int:
+    """
+    Find nearest UTF-8 safe boundary from position `near` in given direction.
+
+    Args:
+        near: position to search from
+        direction: -1 (left) or +1 (right)
+        data: raw bytes
+        max_search: max bytes to search
+
+    Returns:
+        Position that is a valid UTF-8 boundary (start or end of complete sequence)
+    """
+    N = len(data)
+    if near < 0 or near >= N:
+        return near
+
+    # Try to move toward a safe boundary
+    for delta in range(1, max_search + 1):
+        candidate = near + delta * direction
+        if candidate < 0 or candidate >= N:
+            break
+
+        b = data[candidate]
+
+        if direction < 0:  # Searching LEFT - need to land on a lead byte or end of sequence
+            if _is_utf8_lead_byte(b):
+                return candidate
+        else:  # Searching RIGHT - need to land after a sequence ends
+            if _is_utf8_lead_byte(b):
+                return candidate
+            if _is_utf8_continuation_byte(b):
+                continue  # keep searching
+            else:  # ASCII - safe boundary
+                return candidate
+
+    # Fallback: return original position
+    return near
+
+
+def _snap_cluster_boundaries_to_utf8(clusters: List[Dict], data: bytes) -> List[Dict]:
+    """
+    FINAL FIX: Snap all cluster boundaries to UTF-8 safe positions.
+
+    This is called as the LAST step of detect_clusters(), after ALL clustering
+    operations (initial segmentation, merging, _ensure_min_clusters, _ensure_non_overlapping).
+
+    Some operations like _ensure_non_overlapping can create boundaries at arbitrary
+    byte positions (e.g., at index 4 in "Привіт"). This function ensures every
+    cluster boundary lands on a valid UTF-8 sequence boundary.
+
+    UTF-8 byte roles:
+    - Lead byte (0xC0-0xDF, 0xE0-0xEF, 0xF0-0xF4): starts a sequence
+    - Continuation byte (0x80-0xBF): continues a sequence
+    - ASCII (0x00-0x7F): standalone, always safe
+
+    A cluster end is safe if the byte BEFORE it is NOT a continuation byte.
+    A cluster start is safe if the byte AT it is NOT a continuation byte.
+    """
+    N = len(data)
+    if len(clusters) == 0 or N == 0:
+        return clusters
+
+    def is_valid_utf8_boundary(pos: int, is_start: bool) -> bool:
+        """Check if position is a valid UTF-8 boundary for a cluster."""
+        if pos < 0 or pos > N:
+            return False
+        if is_start:
+            # Start is safe if it's at position 0 or the byte AT pos is not a continuation
+            return pos == 0 or not _is_utf8_continuation_byte(data[pos])
+        else:
+            # End (exclusive) is safe if the byte BEFORE it is not a continuation
+            return pos == 0 or not _is_utf8_continuation_byte(data[pos - 1])
+
+    def find_safe_end(end: int) -> int:
+        """Find a safe end position (not ending in middle of UTF-8 sequence)."""
+        if is_valid_utf8_boundary(end, is_start=False):
+            return end
+        # Move left until we find a safe position
+        while end > 0 and _is_utf8_continuation_byte(data[end - 1]):
+            end -= 1
+        return max(1, end)
+
+    def find_safe_start(start: int) -> int:
+        """Find a safe start position (not starting with continuation byte)."""
+        if is_valid_utf8_boundary(start, is_start=True):
+            return start
+        # Move right until we find a safe position
+        while start < N and _is_utf8_continuation_byte(data[start]):
+            start += 1
+        return min(start, N)
+
+    # Sort clusters by start position
+    sorted_clusters = sorted(clusters, key=lambda c: c['start'])
+
+    result = []
+    expected_start = 0  # Track expected next start position to avoid overlaps
+
+    for c in sorted_clusters:
+        start = c['start']
+        end = c['end']
+
+        # Don't go backward - ensure start >= expected_start
+        if start < expected_start:
+            start = expected_start
+
+        # Ensure start is safe
+        start = find_safe_start(start)
+        # Ensure end is safe
+        end = find_safe_end(end)
+        # Ensure end > start
+        if end <= start:
+            # Very rare edge case - at least give 1 byte
+            if start < N:
+                end = start + 1
+            else:
+                continue
+
+        # Rebuild positions
+        positions = np.arange(start, end)
+
+        # Rebuild cluster dict
+        new_cluster = dict(c)
+        new_cluster['start'] = start
+        new_cluster['end'] = end
+        new_cluster['size'] = len(positions)
+        new_cluster['positions'] = positions
+        result.append(new_cluster)
+
+        expected_start = end
+
+    # Final verification
+    for c in result:
+        start = c['start']
+        end = c['end']
+        # Start byte must not be a continuation
+        assert start == 0 or not _is_utf8_continuation_byte(data[start]), \
+            f"Cluster [{start}:{end}] starts with continuation byte 0x{data[start]:02X}!"
+        # Byte before end must not be a continuation
+        assert end == 0 or not _is_utf8_continuation_byte(data[end - 1]), \
+            f"Cluster [{start}:{end}] ends with continuation byte 0x{data[end-1]:02X}!"
+
+    return result
+
+
+def _snap_boundaries_to_utf8(boundaries: np.ndarray, data: bytes) -> np.ndarray:
+    """
+    Post-process cluster boundaries to ensure they don't cut through UTF-8 sequences.
+    
+    For each boundary, search outward until finding a safe UTF-8 boundary:
+    - Left boundaries: snap to start of UTF-8 sequence (lead byte or ASCII)
+    - Right boundaries: snap to end of UTF-8 sequence (next char's start)
+    
+    Args:
+        boundaries: initial boundaries from field-based detection
+        data: raw bytes
+        
+    Returns:
+        UTF-8-safe boundaries
+    """
+    N = len(data)
+    safe_boundaries = []
+    
+    # First boundary (0) is always safe
+    if len(boundaries) == 0:
+        return np.array([], dtype=int)
+    
+    # Start with 0
+    safe_boundaries.append(0)
+    
+    # Process each internal boundary
+    for b in boundaries:
+        if b <= 0 or b >= N:
+            continue
+        
+        # For internal boundaries, we need BOTH left-safe and right-safe
+        # Search left for lead byte
+        left_safe = _find_utf8_boundary(b, -1, data, max_search=5)
+        # Search right for next sequence start
+        right_safe = _find_utf8_boundary(b, +1, data, max_search=5)
+        
+        # Choose the closest safe position
+        dist_left = b - left_safe
+        dist_right = right_safe - b
+        
+        if dist_left <= dist_right:
+            new_b = left_safe
+        else:
+            new_b = right_safe
+        
+        # Ensure we don't go backwards past previous boundary
+        if safe_boundaries and new_b <= safe_boundaries[-1]:
+            new_b = safe_boundaries[-1] + 1
+            # Snap to next UTF-8 boundary
+            new_b = _find_utf8_boundary(new_b, +1, data, max_search=5)
+        
+        if new_b < N and new_b > safe_boundaries[-1]:
+            safe_boundaries.append(int(new_b))
+    
+    return np.array(sorted(set(safe_boundaries)), dtype=int)
+
 class SelfOrganizerV4:
     """
     Механізм самоорганізації V4 з мультимасштабним аналізом границь.
@@ -134,6 +346,14 @@ class SelfOrganizerV4:
         N = self.field.N
         boundaries = self.detect_boundaries()
         self.last_boundaries = boundaries  # зберігаємо для зовнішнього доступу
+        
+        # FIX: Snap boundaries to UTF-8 safe positions
+        # This ensures clusters don't cut through multi-byte UTF-8 sequences
+        data = self.field.substrate.raw_data
+        if len(boundaries) > 0:
+            boundaries = _snap_boundaries_to_utf8(boundaries, data)
+            self.last_boundaries = boundaries
+        
         cluster_policy = self.numeric_policy.cluster_policy(N)
         self.last_cluster_policy = dict(cluster_policy)
 
@@ -242,6 +462,11 @@ class SelfOrganizerV4:
                     'quality_score': 0.5,  # Помірна якість для рівномірного поділу
                 }
                 clusters.append(cluster)
+
+        # FINAL FIX: Snap ALL cluster boundaries to UTF-8 safe positions
+        # This must be done LAST, after ALL clustering operations (merge, split, etc.)
+        # to catch any boundaries created by _ensure_non_overlapping splitting
+        clusters = _snap_cluster_boundaries_to_utf8(clusters, data)
 
         self.clusters = clusters
         return clusters

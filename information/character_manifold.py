@@ -304,6 +304,233 @@ class CharacterManifold:
             return 'cyrillic_lower'
         return 'unknown'
     
+    def get_script_for_cp(self, codepoint: int) -> str:
+        """
+        Detect script (writing system) from Unicode codepoint.
+        
+        Returns one of: 'cyrillic', 'latin', 'cjk', 'arabic', 'devanagari', 'hangul', 'greek', 'hebrew', 'thai', 'other', 'ascii', 'punct'
+        
+        KEY FIX: ASCII letters (A-Z, a-z) are classified as 'latin', not 'ascii'.
+        This ensures correct script detection for English words and proper
+        continuation behavior (Latin words should continue with Latin chars, not
+        favor Cyrillic).
+        
+        Only control chars, space, and ASCII punctuation are 'ascii'.
+        """
+        cp = codepoint
+        
+        # ASCII Control characters: 0x00-0x1F
+        if cp < 0x20:
+            return 'control'
+        
+        # ASCII Letters: A-Z (0x41-0x5A) and a-z (0x61-0x7A) -> 'latin'
+        # These ARE Latin letters, just in the basic ASCII range
+        if (0x41 <= cp <= 0x5A) or (0x61 <= cp <= 0x7A):
+            return 'latin'
+        
+        # ASCII Space: 0x20
+        if cp == 0x20:
+            return 'ascii'  # Space is a special "universal" character
+        
+        # ASCII Punctuation and symbols: 0x21-0x2F, 0x3A-0x40, 0x5B-0x60, 0x7B-0x7E
+        if cp <= 0x7E:
+            return 'ascii'  # Punctuation, digits, symbols are 'ascii'
+        
+        # ASCII extended: 0x80-0xFF -> 'latin_ext'
+        if cp <= 0xFF:
+            return 'latin_ext'
+        
+        # Cyrillic: U+0400-U+04FF (including extended)
+        if 0x0400 <= cp <= 0x04FF:
+            return 'cyrillic'
+        if 0x0500 <= cp <= 0x052F:
+            return 'cyrillic'
+        
+        # Latin extended-A/B: U+0100-U+024F
+        if 0x0100 <= cp <= 0x024F:
+            return 'latin'
+        
+        # Greek: U+0370-U+03FF
+        if 0x0370 <= cp <= 0x03FF:
+            return 'greek'
+        
+        # Hebrew: U+0590-U+05FF
+        if 0x0590 <= cp <= 0x05FF:
+            return 'hebrew'
+        
+        # Arabic: U+0600-U+06FF
+        if 0x0600 <= cp <= 0x06FF:
+            return 'arabic'
+        
+        # Devanagari and Indic: U+0900-U+097F
+        if 0x0900 <= cp <= 0x097F:
+            return 'devanagari'
+        if 0x0980 <= cp <= 0x09FF:
+            return 'bengali'
+        if 0x0A00 <= cp <= 0x0AFF:
+            return 'gurmukhi'
+        
+        # Thai: U+0E00-U+0E7F
+        if 0x0E00 <= cp <= 0x0E7F:
+            return 'thai'
+        
+        # Hangul (Korean): U+AC00-U+D7AF
+        if 0xAC00 <= cp <= 0xD7AF:
+            return 'hangul'
+        
+        # CJK Unified Ideographs: U+4E00-U+9FFF
+        if 0x4E00 <= cp <= 0x9FFF:
+            return 'cjk'
+        
+        # CJK Extensions: U+3400-U+4DBF
+        if 0x3400 <= cp <= 0x4DBF:
+            return 'cjk_ext'
+        
+        # Hiragana/Katakana: U+3040-U+30FF
+        if 0x3040 <= cp <= 0x309F:
+            return 'hiragana'
+        if 0x30A0 <= cp <= 0x30FF:
+            return 'katakana'
+        
+        # General punctuation and symbols that are not in ASCII
+        if 0x2000 <= cp <= 0x206F:  # General Punctuation
+            return 'punct'
+        if 0x2070 <= cp <= 0x209F:  # Superscripts/Subscripts
+            return 'punct'
+        if 0x20A0 <= cp <= 0x20CF:  # Currency
+            return 'punct'
+        if 0x2100 <= cp <= 0x214F:  # Letterlike Symbols
+            return 'punct'
+        if 0x2190 <= cp <= 0x21FF:  # Arrows
+            return 'punct'
+        if 0x2200 <= cp <= 0x22FF:  # Mathematical Operators
+            return 'punct'
+        
+        return 'other'
+    
+    def get_active_script(self, trajectory: List[Tuple[int, int]]) -> str:
+        """
+        Determine the active script from a character trajectory.
+        
+        Analyzes the last few non-space/punct characters to detect which
+        writing system is currently active. Uses majority voting with recency bias.
+        
+        IMPORTANT: Ignores spaces and punctuation when determining active script.
+        After "Hello world" vs "Привіт світе", the active script should be
+        Latin/Cyrillic respectively, not based on the trailing space.
+        
+        Args:
+            trajectory: List[(codepoint, position)]
+            
+        Returns:
+            Script name ('cyrillic', 'latin', 'ascii', 'punct', etc.)
+        """
+        if not trajectory:
+            return 'ascii'
+        
+        # Collect recent characters, ignoring spaces and punctuation
+        letter_chars = []
+        for cp, pos in reversed(trajectory):
+            script = self.get_script_for_cp(cp)
+            if script not in {'space', 'punct', 'control', 'ascii'}:
+                letter_chars.append(script)
+            else:
+                # Stop at space/punct - don't count what comes after
+                break
+        
+        if not letter_chars:
+            # All space/punct - default based on first letter
+            for cp, pos in trajectory:
+                script = self.get_script_for_cp(cp)
+                if script not in {'space', 'punct', 'control'}:
+                    return script
+            return 'ascii'
+        
+        # Majority vote with recency bias (earlier in list = more recent)
+        script_counts = {}
+        for script in letter_chars[:5]:  # Last 5 letter chars
+            script_counts[script] = script_counts.get(script, 0) + 1
+        
+        return max(script_counts.items(), key=lambda x: x[1])[0]
+    
+    def get_allowed_next_scripts(
+        self,
+        last_script: str,
+    ) -> set:
+        """
+        Get scripts that are allowed to follow the given script.
+        
+        Defines the transition matrix between writing systems.
+        
+        KEY FIX: After 'latin' script (which now includes ASCII letters A-Z, a-z),
+        we allow both Latin and Cyrillic continuation (for mixed-language texts).
+        After 'ascii' (only space and punctuation remain), any script is allowed
+        as a universal transition point.
+        
+        Args:
+            last_script: The current script
+            
+        Returns:
+            Set of allowed next scripts
+        """
+        # Universal transitions - allowed from any script
+        universal = {'punct', 'control', 'ascii', 'space'}
+        
+        # Script-specific transition rules
+        transitions = {
+            # Latin: follows itself, allows punctuation, allows Cyrillic for mixed texts
+            'latin': {'latin', 'cyrillic', 'latin_ext', 'cyrillic_ext', 'punct', 'ascii', 'space'},
+            
+            # Latin extended: like Latin
+            'latin_ext': {'latin', 'cyrillic', 'latin_ext', 'cyrillic_ext', 'punct', 'ascii', 'space'},
+            
+            # Cyrillic: mostly follows itself, allows punctuation, allows Latin for mixed texts
+            'cyrillic': {'cyrillic', 'latin', 'cyrillic_ext', 'latin_ext', 'punct', 'ascii', 'space'},
+            
+            # Cyrillic extended: like Cyrillic
+            'cyrillic_ext': {'cyrillic', 'latin', 'cyrillic_ext', 'latin_ext', 'punct', 'ascii', 'space'},
+            
+            # CJK scripts: mostly self, allow punctuation
+            'cjk': {'cjk', 'cjk_ext', 'hiragana', 'katakana', 'punct', 'space'},
+            'cjk_ext': {'cjk', 'cjk_ext', 'hiragana', 'katakana', 'punct', 'space'},
+            'hiragana': {'hiragana', 'katakana', 'cjk', 'cjk_ext', 'punct', 'space'},
+            'katakana': {'katakana', 'hiragana', 'cjk', 'cjk_ext', 'punct', 'space'},
+            
+            # Other letter scripts: allow punctuation
+            'greek': {'greek', 'punct', 'ascii', 'space'},
+            'arabic': {'arabic', 'punct', 'ascii', 'space'},
+            'hebrew': {'hebrew', 'punct', 'ascii', 'space'},
+            'hangul': {'hangul', 'cjk', 'cjk_ext', 'punct', 'space'},
+            
+            # Punctuation: universal target, allows any letter script
+            'punct': universal | {
+                'cyrillic', 'cyrillic_ext', 'latin', 'latin_ext', 'cjk', 'cjk_ext',
+                'hiragana', 'katakana', 'greek', 'arabic', 'hebrew', 'hangul'
+            },
+            
+            # Space: universal transition point, allows any letter script
+            'space': universal | {
+                'cyrillic', 'cyrillic_ext', 'latin', 'latin_ext', 'cjk', 'cjk_ext',
+                'hiragana', 'katakana', 'greek', 'arabic', 'hebrew', 'hangul'
+            },
+            
+            # Control: universal source
+            'control': universal,
+            
+            # ASCII (space/punct only now - letters moved to 'latin'): universal transition
+            'ascii': universal | {
+                'cyrillic', 'cyrillic_ext', 'latin', 'latin_ext', 'cjk', 'cjk_ext',
+                'hiragana', 'katakana', 'greek', 'arabic', 'hebrew', 'hangul'
+            },
+            
+            # Other/unknown: allow punctuation as safe fallback
+            'other': universal | {'cyrillic', 'latin', 'cjk'},  # Allow common scripts
+        }
+        
+        return transitions.get(last_script, universal)
+    
+    # NOTE: get_script_for_cp is defined at line ~307 (the correct one with Latin letter fix)
+    
     def char_to_point(self, codepoint: int) -> np.ndarray:
         """Convert codepoint to manifold point (embedding)."""
         if codepoint in self.characters:
@@ -381,7 +608,11 @@ class CharacterManifold:
         top_k: int = 10,
     ) -> List[Tuple[int, float]]:
         """
-        Predict next characters given context.
+        Predict next characters given context, with script-aware filtering.
+
+        Filters candidates to match the active writing system (script), preventing
+        impossible transitions like Cyrillic → Latin mid-word. Punctuation,
+        spaces, and newlines are allowed from any script.
         
         Returns:
             List[(codepoint, probability)]
@@ -391,22 +622,67 @@ class CharacterManifold:
         
         last_cp = context_cps[-1]
         
-        # Get region of last char
+        # Detect active script of the last character
+        last_script = self.get_script_for_cp(last_cp)
+        
+        # Punctuation/spaces are universal transitions (allowed from any script)
+        universal_chars = {0x0020, 0x000A, 0x000D, 0x0021, 0x002C, 0x002E, 0x003F, 0x003A,
+                          0x003B, 0x0028, 0x0029, 0x002D, 0x2018, 0x2019, 0x201C, 0x201D}
+        
+        def is_allowed_transition(cp: int) -> bool:
+            """Check if transition from last_script to cp is linguistically plausible."""
+            cp_script = self.get_script_for_cp(cp)
+            
+            # Universal chars always allowed
+            if cp in universal_chars:
+                return True
+            
+            # Same script: always allowed
+            if cp_script == last_script:
+                return True
+            
+            # Allow Latin ↔ Cyrillic mixing (common in some texts)
+            if {last_script, cp_script} == {'latin', 'cyrillic'}:
+                return True
+            
+            # Allow transitions TO punctuation from any script (already handled above)
+            # but allow transitions FROM punctuation to any script (punct is universal source)
+            if last_script in {'punct', 'control', 'ascii'}:
+                return True
+            
+            # Block same-script-letter transitions across incompatible scripts
+            # e.g., Cyrillic → Latin (letters only)
+            letter_scripts = {'cyrillic', 'latin', 'greek', 'hebrew', 'arabic', 'cjk',
+                            'hiragana', 'katakana', 'hangul', 'devanagari', 'bengali'}
+            if cp_script in letter_scripts and last_script in letter_scripts:
+                return cp_script == last_script  # Only allow same-script letters
+            
+            # Everything else: allow (numbers, currency, misc symbols)
+            return True
+        
+        # Get candidates from same region first
+        candidates = []
         last_region = self.get_region_for_cp(last_cp)
         
-        # Get candidates (same region first, then others)
-        candidates = []
-        
         if last_region in self.regions:
-            candidates.extend(self.regions[last_region].codepoints)
+            for cp in self.regions[last_region].codepoints:
+                if is_allowed_transition(cp):
+                    candidates.append(cp)
         
-        # Add from transitions
+        # Add from transitions (only if they pass script filter)
         for (f, t), count in self.transitions.items():
-            if f == last_cp and t not in candidates:
+            if f == last_cp and t not in candidates and is_allowed_transition(t):
                 candidates.append(t)
         
+        # If no script-filtered candidates, fall back to full character set filtered
         if not candidates:
-            candidates = list(self.characters.keys())
+            for cp in self.characters.keys():
+                if is_allowed_transition(cp):
+                    candidates.append(cp)
+        
+        # Final fallback: at least provide universal characters
+        if not candidates:
+            candidates = [0x0020]  # space
         
         # Compute probabilities using transition + embedding similarity
         probs = []
