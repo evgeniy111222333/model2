@@ -114,10 +114,16 @@ class EmergentTokenDiscovery:
         min_frequency: int = 2,
         max_token_length: int = 8,
         min_info_gain: float = 0.1,
+        n_permutations: int = 4,
+        max_permutation_candidates: int = 16,
+        max_candidates: int = 256,
     ):
         self.min_frequency = min_frequency
         self.max_token_length = max_token_length
         self.min_info_gain = min_info_gain
+        self.n_permutations = max(0, int(n_permutations))
+        self.max_permutation_candidates = max(0, int(max_permutation_candidates))
+        self.max_candidates = max(1, int(max_candidates))
         self.discovered_tokens = []
 
     @staticmethod
@@ -147,6 +153,19 @@ class EmergentTokenDiscovery:
         Якщо токен закінчується в середині UTF-8 послідовності - це "битий" токен.
         """
         # Якщо токен ASCII - завжди OK
+        end_pos = position + len(token)
+        start_ok = (
+            position == 0
+            or position == len(data)
+            or not (0x80 <= data[position] <= 0xBF)
+        )
+        end_ok = (
+            end_pos == 0
+            or end_pos == len(data)
+            or not (0x80 <= data[end_pos] <= 0xBF)
+        )
+        return start_ok and end_ok and self._is_valid_utf8(token)
+
         if all(b < 0x80 for b in token):
             return True
         
@@ -196,7 +215,7 @@ class EmergentTokenDiscovery:
         N = len(data)
         ngram_table = {}  # bytes → {count, positions, in_clusters}
 
-        for cluster in clusters:
+        for cluster_idx, cluster in enumerate(clusters):
             start = cluster['start']
             end = cluster['end']
 
@@ -224,10 +243,7 @@ class EmergentTokenDiscovery:
 
                     ngram_table[token]['count'] += 1
                     ngram_table[token]['positions'].append(start + i)
-                    ngram_table[token]['in_clusters'].add(
-                        next((j for j, c in enumerate(clusters)
-                              if c['start'] <= start + i < c['end']), -1)
-                    )
+                    ngram_table[token]['in_clusters'].add(cluster_idx)
 
         # Фільтрація за мінімальною частотою
         candidates = {
@@ -243,6 +259,8 @@ class EmergentTokenDiscovery:
         substrate,
         clusters: List[Dict],
         transitions: Optional[np.ndarray] = None,
+        positions: Optional[List[int]] = None,
+        global_dist: Optional[np.ndarray] = None,
     ) -> float:
         """
         Обчислити information gain токена відносно окремих байтів із Laplace smoothing.
@@ -259,19 +277,23 @@ class EmergentTokenDiscovery:
         epsilon = 1e-5
 
         # === Глобальний розподіл із Laplace smoothing ===
-        global_counts = np.bincount(np.frombuffer(data, dtype=np.uint8), minlength=256).astype(np.float64) + epsilon
-        global_dist = global_counts / global_counts.sum()
+        if global_dist is None:
+            global_counts = np.bincount(np.frombuffer(data, dtype=np.uint8), minlength=256).astype(np.float64) + epsilon
+            global_dist = global_counts / global_counts.sum()
 
         # Розподіл байтів після токена за допомогою C-level find
-        token_positions = []
-        pos = 0
         limit = N - L
-        while pos < limit:
-            pos = data.find(token, pos)
-            if pos == -1 or pos >= limit:
-                break
-            token_positions.append(pos)
-            pos += 1
+        if positions is None:
+            token_positions = []
+            pos = 0
+            while pos < limit:
+                pos = data.find(token, pos)
+                if pos == -1 or pos >= limit:
+                    break
+                token_positions.append(pos)
+                pos += 1
+        else:
+            token_positions = [int(pos) for pos in positions if int(pos) < limit]
 
         if len(token_positions) < self.min_frequency:
             return 0.0
@@ -322,6 +344,8 @@ class EmergentTokenDiscovery:
         substrate,
         pc=None,
         u_field: Optional[np.ndarray] = None,
+        positions: Optional[List[int]] = None,
+        errors: Optional[np.ndarray] = None,
     ) -> float:
         """
         Обчислити предиктивну силу токена відносно реального стану поля u_field.
@@ -336,16 +360,18 @@ class EmergentTokenDiscovery:
         if N < L + 1:
             return 0.0
 
-        # Знаходимо всі позиції токена за допомогою C-level find
-        token_positions = []
-        pos = 0
         limit = N - L
-        while pos < limit:
-            pos = data.find(token, pos)
-            if pos == -1 or pos >= limit:
-                break
-            token_positions.append(pos)
-            pos += 1
+        if positions is None:
+            token_positions = []
+            pos = 0
+            while pos < limit:
+                pos = data.find(token, pos)
+                if pos == -1 or pos >= limit:
+                    break
+                token_positions.append(pos)
+                pos += 1
+        else:
+            token_positions = [int(pos) for pos in positions if int(pos) < limit]
 
         if len(token_positions) < self.min_frequency:
             return 0.0
@@ -358,7 +384,8 @@ class EmergentTokenDiscovery:
         elif len(u_state) > N:
             u_state = u_state[:N]
 
-        errors, _ = pc.compute_prediction_error(u_state)
+        if errors is None:
+            errors, _ = pc.compute_prediction_error(u_state)
 
         # Середня помилка на позиціях після токена
         after_token_errors = []
@@ -454,15 +481,31 @@ class EmergentTokenDiscovery:
         data = substrate.raw_data
         N = len(data)
         data_arr = np.frombuffer(data, dtype=np.uint8)
+        global_counts = np.bincount(data_arr, minlength=256).astype(np.float64) + 1e-5
+        global_dist = global_counts / global_counts.sum()
         transitions = np.zeros((256, 256), dtype=np.float64)
         if N > 1:
             np.add.at(transitions, (data_arr[:-1], data_arr[1:]), 1.0)
+
+        pc_errors = None
+        if pc is not None:
+            u_state = u_field if u_field is not None else (np.ones(N, dtype=np.float32) * 0.5)
+            if len(u_state) < N:
+                u_state = np.pad(u_state, (0, N - len(u_state)), mode='edge')
+            elif len(u_state) > N:
+                u_state = u_state[:N]
+            pc_errors, _ = pc.compute_prediction_error(u_state)
 
         # 2. Попередня фільтрація за IG
         prefiltered_candidates = []
         for token_bytes, info in candidates.items():
             info_gain = self.compute_token_information_gain(
-                token_bytes, substrate, clusters, transitions=transitions
+                token_bytes,
+                substrate,
+                clusters,
+                transitions=transitions,
+                positions=info['positions'],
+                global_dist=global_dist,
             )
 
             if info_gain < self.min_info_gain:
@@ -470,19 +513,45 @@ class EmergentTokenDiscovery:
 
             prefiltered_candidates.append((token_bytes, info, info_gain))
 
+        prefiltered_candidates.sort(
+            key=lambda item: (
+                item[2],
+                item[1]['count'],
+                len(item[1]['in_clusters']),
+                item[1]['length'],
+            ),
+            reverse=True,
+        )
+        prefiltered_candidates = prefiltered_candidates[:self.max_candidates]
+
         m = len(prefiltered_candidates)  # Кількість тестів
 
         # 3. Оцінка кожного кандидата
         candidate_results = []
-        for token_bytes, info, info_gain in prefiltered_candidates:
+        for candidate_idx, (token_bytes, info, info_gain) in enumerate(prefiltered_candidates):
             # Предиктивна сила на реальному полі u_field
-            pred_power = self.compute_predictive_power(token_bytes, substrate, pc, u_field=u_field)
+            pred_power = self.compute_predictive_power(
+                token_bytes,
+                substrate,
+                pc,
+                u_field=u_field,
+                positions=info['positions'],
+                errors=pc_errors,
+            )
 
             # Частотна стабільність
             cluster_diversity = len(info['in_clusters'])
 
             # Статистичний тест (Permutation Test)
-            p_value = self.compute_permutation_p_value(token_bytes, substrate, info_gain, n_permutations=50)
+            if candidate_idx < self.max_permutation_candidates and self.n_permutations > 0:
+                p_value = self.compute_permutation_p_value(
+                    token_bytes,
+                    substrate,
+                    info_gain,
+                    n_permutations=self.n_permutations,
+                )
+            else:
+                p_value = 1.0
 
             candidate_results.append({
                 'token_bytes': token_bytes,

@@ -551,15 +551,14 @@ class FieldSystemV6:
                 else:
                     W_mod = 2.0 * (self.interaction_field - 0.5)
                     W_mod_expanded = W_mod
+                interaction_modulation = (
+                    self.interaction_modulation_scale * W_mod_expanded * _sigmoid(Phi)
+                )  # (N, n_active)
             else:
-                W_mod_expanded = np.zeros_like(Phi)
+                interaction_modulation = 0.0
 
             # Double-well reaction
             R = -4.0 * a_k_vec[None, :] * Phi * (Phi ** 2 - theta_k_vec[None, :])  # (N, n_active)
-
-            interaction_modulation = (
-                self.interaction_modulation_scale * W_mod_expanded * _sigmoid(Phi)
-            )  # (N, n_active)
 
             dphi = (D_k_vec[None, :] * laplacian_Phi  # дифузія
                     + R                                   # реакція
@@ -646,12 +645,14 @@ class FieldSystemV6:
                 else:
                     W_mod_chunk = 2.0 * (self.interaction_field[start:end] - 0.5)
                     W_mod_chunk_expanded = W_mod_chunk
+                interaction_modulation = (
+                    self.interaction_modulation_scale * W_mod_chunk_expanded * _sigmoid(Phi_chunk)
+                )
             else:
-                W_mod_chunk_expanded = np.zeros_like(Phi_chunk)
+                interaction_modulation = 0.0
                 
             # Реакція
             R = -4.0 * a_k_vec[None, :] * Phi_chunk * (Phi_chunk ** 2 - theta_k_vec[None, :])
-            interaction_modulation = self.interaction_modulation_scale * W_mod_chunk_expanded * _sigmoid(Phi_chunk)
             
             dphi_chunk = (D_k_vec[None, :] * laplacian_chunk
                           + R

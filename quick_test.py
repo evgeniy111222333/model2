@@ -79,7 +79,9 @@ from bcs.core.field import FieldSystemV6
 from bcs.perception.organization import SelfOrganizerV4
 
 def is_valid_utf8(start, end, data):
-    if start > 0 and 0x80 <= data[start-1] <= 0xBF:
+    if start < 0 or end < start or end > len(data):
+        return False
+    if start < len(data) and 0x80 <= data[start] <= 0xBF:
         return False
     if end < len(data) and 0x80 <= data[end] <= 0xBF:
         return False

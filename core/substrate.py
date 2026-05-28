@@ -16,12 +16,13 @@ def _make_bytesubstrate():
                 data = data[:max_length]
             self.raw_data = data
             self.length = len(data)
-            self.byte_values = np.array(list(data), dtype=np.uint8)
+            self.byte_values = np.frombuffer(data, dtype=np.uint8)
             self.byte_distribution = self._compute_distribution()
             # One-hot encoding (Рівняння 1): s ↦ (e_1, ..., e_N)
             self.one_hot = np.zeros((self.length, 256), dtype=np.float32)
             if self.length > 0:
                 self.one_hot[np.arange(self.length), self.byte_values] = 1.0
+            self._one_hot_cumsum = None
 
         def _compute_distribution(self):
             counts = np.bincount(self.byte_values, minlength=256)
@@ -46,14 +47,16 @@ def _make_bytesubstrate():
             N = self.length
             if N == 0:
                 return np.zeros((0, 256), dtype=np.float32)
-            one_hot = np.zeros((N, 256), dtype=np.float32)
-            one_hot[np.arange(N), self.byte_values] = 1.0
+            if self._one_hot_cumsum is None:
+                self._one_hot_cumsum = np.vstack([
+                    np.zeros((1, 256), dtype=np.float32),
+                    np.cumsum(self.one_hot, axis=0),
+                ])
             half = window // 2
-            cum = np.vstack([np.zeros((1, 256), dtype=np.float32), np.cumsum(one_hot, axis=0)])
             indices = np.arange(N, dtype=np.intp)
             starts = np.maximum(0, indices - half)
             ends = np.minimum(N, indices + half + 1)
-            window_sums = cum[ends] - cum[starts]
+            window_sums = self._one_hot_cumsum[ends] - self._one_hot_cumsum[starts]
             window_sizes = (ends - starts).astype(np.float32)[:, None]
             return (window_sums / np.maximum(window_sizes, 1.0)).astype(np.float32)
 

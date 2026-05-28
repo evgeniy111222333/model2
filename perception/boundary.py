@@ -43,15 +43,53 @@ class MultiScaleBoundaryDetector:
 
         boundary_confidence = np.zeros(N, dtype=np.float32)
         bv = substrate.byte_values
+        active_bytes = np.flatnonzero(getattr(substrate, 'byte_distribution', np.bincount(bv, minlength=256)) > 0)
+        if active_bytes.size == 0:
+            active_bytes = np.arange(256, dtype=np.int64)
+        byte_to_col = np.full(256, -1, dtype=np.int32)
+        byte_to_col[active_bytes] = np.arange(active_bytes.size, dtype=np.int32)
+        active_cols = byte_to_col[bv]
+        active_one_hot = np.zeros((N, active_bytes.size), dtype=np.float32)
+        active_one_hot[np.arange(N), active_cols] = 1.0
+        active_cum = np.vstack([
+            np.zeros((1, active_bytes.size), dtype=np.float32),
+            np.cumsum(active_one_hot, axis=0),
+        ])
+
+        analysis_stride = max(1, N // 16384)
+        analysis_indices = np.arange(0, N, analysis_stride, dtype=np.intp)
+        if analysis_indices[-1] != N - 1:
+            analysis_indices = np.append(analysis_indices, N - 1)
+        output_indices = np.arange(N, dtype=np.float32)
+        transition_cum = None
+
+        def expand_signal(signal: np.ndarray) -> np.ndarray:
+            signal = np.asarray(signal, dtype=np.float32)
+            if analysis_stride == 1 and signal.shape[0] == N:
+                return signal
+            return np.interp(output_indices, analysis_indices, signal).astype(np.float32)
+
+        def local_distributions(window: int, indices: np.ndarray = analysis_indices) -> np.ndarray:
+            half = int(window) // 2
+            starts = np.maximum(0, indices - half)
+            ends = np.minimum(N, indices + half + 1)
+            window_sums = active_cum[ends] - active_cum[starts]
+            window_sizes = (ends - starts).astype(np.float32)[:, None]
+            return (window_sums / np.maximum(window_sizes, 1.0)).astype(np.float32)
+
         signal_policy = self.numeric_policy.boundary_signal_policy(N)
         self.last_policy['boundary_signal'] = dict(signal_policy)
 
-        for scale in self.scales:
+        min_scale = 32 if N >= 16384 else (16 if N >= 8192 else (8 if N >= 4096 else 0))
+        active_scales = [scale for scale in self.scales if scale >= min_scale]
+        self.last_policy['active_scales'] = active_scales
+
+        for scale in active_scales:
             if scale >= N:
                 continue
 
             # Локальні розподіли на цьому масштабі
-            local_dist = substrate.compute_local_distributions(window=scale)
+            local_dist = local_distributions(scale)
 
             # 1. Градієнт ентропії
             p_safe = np.maximum(local_dist, 1e-10)
@@ -62,18 +100,26 @@ class MultiScaleBoundaryDetector:
             #    (векторизовано через згортку; використовуємо градієнт замість
             #    сирової щільності, бо для UTF-8 тексту щільність переходів
             #    постійно висока і не дає сигналу про границі)
-            transitions = np.zeros(N, dtype=np.float32)
-            transitions[1:] = (bv[1:] != bv[:-1]).astype(np.float32)
             half = scale // 2
-            kernel = np.ones(scale, dtype=np.float32) / scale
-            trans_density = np.convolve(transitions, kernel, mode='same')
+            if transition_cum is None:
+                transitions = np.zeros(N, dtype=np.float32)
+                transitions[1:] = (bv[1:] != bv[:-1]).astype(np.float32)
+                transition_cum = np.concatenate([
+                    np.zeros(1, dtype=np.float32),
+                    np.cumsum(transitions, dtype=np.float32),
+                ])
+            starts = np.maximum(0, analysis_indices - half)
+            ends = np.minimum(N, analysis_indices + half + 1)
+            trans_density = (transition_cum[ends] - transition_cum[starts]) / np.maximum(ends - starts, 1)
             trans_grad = np.abs(np.gradient(trans_density))
 
             # 3. Distribution shift: L2 distance between adjacent local distributions
-            dist_shift = np.zeros(N, dtype=np.float32)
-            if N > 1:
+            dist_shift = np.zeros(len(analysis_indices), dtype=np.float32)
+            if len(analysis_indices) > 1:
                 diff = local_dist[1:] - local_dist[:-1]
                 dist_shift[1:] = np.sqrt(np.sum(diff ** 2, axis=1)).astype(np.float32)
+            kernel_size = max(3, int(scale) // max(1, analysis_stride))
+            kernel = np.ones(kernel_size, dtype=np.float32) / kernel_size
             dist_shift_smooth = np.convolve(dist_shift, kernel, mode='same')
 
             # Нормалізуємо кожен сигнал незалежно перед комбінацією,
@@ -95,7 +141,7 @@ class MultiScaleBoundaryDetector:
 
             # Вага масштабу: менший масштаб → вища точність → більша вага
             weight = 1.0 / (1.0 + np.log2(max(scale, 2)))
-            boundary_confidence += weight * scale_signal
+            boundary_confidence += weight * expand_signal(scale_signal)
 
         # === Макро-масштабний сигнал зміни розподілу ===
         # V6 FIX #2: Багатороздільний макро-аналіз з обмеженням вікна.
@@ -109,19 +155,22 @@ class MultiScaleBoundaryDetector:
             macro_windows.append(int(signal_policy['mid_macro_window']))
         if N > 500:
             macro_windows.append(int(signal_policy['small_macro_window']))
+        if N >= 16384:
+            macro_windows = [int(signal_policy['small_macro_window'])]
+        elif N >= 8192:
+            macro_windows = [
+                int(signal_policy['mid_macro_window']),
+                int(signal_policy['small_macro_window']),
+            ]
 
-        one_hot = substrate.one_hot
-        cum = np.vstack(
-            [np.zeros((1, 256), dtype=np.float32),
-             np.cumsum(one_hot, axis=0)]
-        )
+        cum = active_cum
 
         for macro_window in macro_windows:
             if macro_window >= N:
                 continue
 
             macro_half = macro_window // 2
-            indices = np.arange(N)
+            indices = analysis_indices
             left_starts = np.maximum(0, indices - macro_half)
             right_ends = np.minimum(N, indices + macro_half)
 
@@ -156,7 +205,7 @@ class MultiScaleBoundaryDetector:
             macro_signal *= edge_mask
 
             # Згладжування макро-сигналу
-            macro_kernel_size = max(macro_window // 3, 3)
+            macro_kernel_size = max(macro_window // max(analysis_stride * 3, 1), 3)
             macro_kernel = np.ones(macro_kernel_size, dtype=np.float32) / macro_kernel_size
             macro_signal = np.convolve(macro_signal, macro_kernel, mode='same')
 
@@ -166,7 +215,7 @@ class MultiScaleBoundaryDetector:
             if macro_max > 0:
                 macro_signal /= macro_max
             weight = signal_policy['macro_weight_base'] / (1.0 + np.log2(max(macro_window, 2)))
-            boundary_confidence += macro_signal * weight
+            boundary_confidence += expand_signal(macro_signal) * weight
 
         # Додатковий сигнал від v-поля (якщо доступне)
         if v_field is not None:

@@ -19,6 +19,12 @@ def _is_utf8_continuation_byte(b: int) -> bool:
     return 0x80 <= b <= 0xBF
 
 
+def _is_utf8_boundary(pos: int, data: bytes) -> bool:
+    """Return True if pos is a valid split point between UTF-8 codepoints."""
+    N = len(data)
+    return 0 <= pos <= N and (pos == 0 or pos == N or not _is_utf8_continuation_byte(data[pos]))
+
+
 def _find_utf8_boundary(near: int, direction: int, data: bytes, max_search: int = 10) -> int:
     """
     Find nearest UTF-8 safe boundary from position `near` in given direction.
@@ -33,30 +39,37 @@ def _find_utf8_boundary(near: int, direction: int, data: bytes, max_search: int 
         Position that is a valid UTF-8 boundary (start or end of complete sequence)
     """
     N = len(data)
-    if near < 0 or near >= N:
+    near = max(0, min(int(near), N))
+    if _is_utf8_boundary(near, data):
         return near
 
-    # Try to move toward a safe boundary
+    # Try to move toward a safe split point.
+    step = -1 if direction < 0 else 1
     for delta in range(1, max_search + 1):
-        candidate = near + delta * direction
-        if candidate < 0 or candidate >= N:
+        candidate = near + delta * step
+        if candidate < 0 or candidate > N:
             break
-
-        b = data[candidate]
-
-        if direction < 0:  # Searching LEFT - need to land on a lead byte or end of sequence
-            if _is_utf8_lead_byte(b):
-                return candidate
-        else:  # Searching RIGHT - need to land after a sequence ends
-            if _is_utf8_lead_byte(b):
-                return candidate
-            if _is_utf8_continuation_byte(b):
-                continue  # keep searching
-            else:  # ASCII - safe boundary
-                return candidate
+        if _is_utf8_boundary(candidate, data):
+            return candidate
 
     # Fallback: return original position
     return near
+
+
+def _nearest_utf8_boundary(pos: int, data: bytes, max_search: int = 10) -> int:
+    """Find the closest valid UTF-8 boundary to pos, preferring the right side on ties."""
+    N = len(data)
+    pos = max(0, min(int(pos), N))
+    if _is_utf8_boundary(pos, data):
+        return pos
+    for delta in range(1, max_search + 1):
+        right = pos + delta
+        if right <= N and _is_utf8_boundary(right, data):
+            return right
+        left = pos - delta
+        if left >= 0 and _is_utf8_boundary(left, data):
+            return left
+    return pos
 
 
 def _snap_cluster_boundaries_to_utf8(clusters: List[Dict], data: bytes) -> List[Dict]:
@@ -82,34 +95,16 @@ def _snap_cluster_boundaries_to_utf8(clusters: List[Dict], data: bytes) -> List[
     if len(clusters) == 0 or N == 0:
         return clusters
 
-    def is_valid_utf8_boundary(pos: int, is_start: bool) -> bool:
-        """Check if position is a valid UTF-8 boundary for a cluster."""
-        if pos < 0 or pos > N:
-            return False
-        if is_start:
-            # Start is safe if it's at position 0 or the byte AT pos is not a continuation
-            return pos == 0 or not _is_utf8_continuation_byte(data[pos])
-        else:
-            # End (exclusive) is safe if the byte BEFORE it is not a continuation
-            return pos == 0 or not _is_utf8_continuation_byte(data[pos - 1])
+    def find_safe_start(start: int) -> int:
+        """Find a safe inclusive start position."""
+        start = max(0, min(int(start), N))
+        if _is_utf8_boundary(start, data):
+            return start
+        return _find_utf8_boundary(start, +1, data, max_search=10)
 
     def find_safe_end(end: int) -> int:
-        """Find a safe end position (not ending in middle of UTF-8 sequence)."""
-        if is_valid_utf8_boundary(end, is_start=False):
-            return end
-        # Move left until we find a safe position
-        while end > 0 and _is_utf8_continuation_byte(data[end - 1]):
-            end -= 1
-        return max(1, end)
-
-    def find_safe_start(start: int) -> int:
-        """Find a safe start position (not starting with continuation byte)."""
-        if is_valid_utf8_boundary(start, is_start=True):
-            return start
-        # Move right until we find a safe position
-        while start < N and _is_utf8_continuation_byte(data[start]):
-            start += 1
-        return min(start, N)
+        """Find a safe exclusive end position."""
+        return _nearest_utf8_boundary(end, data, max_search=10)
 
     # Sort clusters by start position
     sorted_clusters = sorted(clusters, key=lambda c: c['start'])
@@ -154,12 +149,10 @@ def _snap_cluster_boundaries_to_utf8(clusters: List[Dict], data: bytes) -> List[
     for c in result:
         start = c['start']
         end = c['end']
-        # Start byte must not be a continuation
-        assert start == 0 or not _is_utf8_continuation_byte(data[start]), \
-            f"Cluster [{start}:{end}] starts with continuation byte 0x{data[start]:02X}!"
-        # Byte before end must not be a continuation
-        assert end == 0 or not _is_utf8_continuation_byte(data[end - 1]), \
-            f"Cluster [{start}:{end}] ends with continuation byte 0x{data[end-1]:02X}!"
+        assert _is_utf8_boundary(start, data), \
+            f"Cluster [{start}:{end}] starts inside a UTF-8 sequence"
+        assert _is_utf8_boundary(end, data), \
+            f"Cluster [{start}:{end}] ends inside a UTF-8 sequence"
 
     return result
 
@@ -194,20 +187,7 @@ def _snap_boundaries_to_utf8(boundaries: np.ndarray, data: bytes) -> np.ndarray:
         if b <= 0 or b >= N:
             continue
         
-        # For internal boundaries, we need BOTH left-safe and right-safe
-        # Search left for lead byte
-        left_safe = _find_utf8_boundary(b, -1, data, max_search=5)
-        # Search right for next sequence start
-        right_safe = _find_utf8_boundary(b, +1, data, max_search=5)
-        
-        # Choose the closest safe position
-        dist_left = b - left_safe
-        dist_right = right_safe - b
-        
-        if dist_left <= dist_right:
-            new_b = left_safe
-        else:
-            new_b = right_safe
+        new_b = _nearest_utf8_boundary(b, data, max_search=5)
         
         # Ensure we don't go backwards past previous boundary
         if safe_boundaries and new_b <= safe_boundaries[-1]:
@@ -219,6 +199,20 @@ def _snap_boundaries_to_utf8(boundaries: np.ndarray, data: bytes) -> np.ndarray:
             safe_boundaries.append(int(new_b))
     
     return np.array(sorted(set(safe_boundaries)), dtype=int)
+
+
+def _js_divergence_many(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Vectorized Jensen-Shannon divergence from one distribution to many."""
+    if q.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    p_safe = np.maximum(np.asarray(p, dtype=np.float64), 1e-10)
+    q_safe = np.maximum(np.asarray(q, dtype=np.float64), 1e-10)
+    m = 0.5 * (q_safe + p_safe[None, :])
+    m_safe = np.maximum(m, 1e-10)
+    kl_pm = np.sum(p_safe[None, :] * np.log(p_safe[None, :] / m_safe), axis=1)
+    kl_qm = np.sum(q_safe * np.log(q_safe / m_safe), axis=1)
+    return 0.5 * (kl_pm + kl_qm)
+
 
 class SelfOrganizerV4:
     """
@@ -260,6 +254,36 @@ class SelfOrganizerV4:
     def compute_js_divergence(self, p: np.ndarray, q: np.ndarray) -> float:
         """Jensen-Shannon дивергенція (симетрична)."""
         return _js_divergence(p, q)
+
+    def _distribution_cumsum(self) -> np.ndarray:
+        substrate = self.field.substrate
+        cum = getattr(substrate, '_one_hot_cumsum', None)
+        if cum is None:
+            cum = np.vstack([
+                np.zeros((1, 256), dtype=np.float32),
+                np.cumsum(substrate.one_hot, axis=0),
+            ])
+            if hasattr(substrate, '_one_hot_cumsum'):
+                substrate._one_hot_cumsum = cum
+        return cum
+
+    def _segment_distribution(self, start: int, end: int) -> np.ndarray:
+        start = max(0, min(int(start), self.field.N))
+        end = max(start, min(int(end), self.field.N))
+        if end <= start:
+            return np.ones(256, dtype=np.float32) / 256.0
+        cum = self._distribution_cumsum()
+        counts = (cum[end] - cum[start]).astype(np.float32)
+        total = float(counts.sum())
+        if total <= 1e-10:
+            return np.ones(256, dtype=np.float32) / 256.0
+        return counts / total
+
+    def _local_distribution_at(self, pos: int, window: int) -> np.ndarray:
+        half = max(1, int(window) // 2)
+        start = max(0, int(pos) - half)
+        end = min(self.field.N, int(pos) + half + 1)
+        return self._segment_distribution(start, end)
 
     def detect_boundaries(self) -> np.ndarray:
         """
@@ -368,15 +392,13 @@ class SelfOrganizerV4:
             segments.append((prev, N))
 
         # Обчислюємо розподіли сегментів
-        local_dist = self.field.substrate.compute_local_distributions(
-            window=max(N // 20, 4)
-        )
+        local_window = max(N // 20, 4)
 
         # Об'єднуємо схожі суміжні сегменти
         # CONCEPT FIX: Передаємо boundary_positions щоб зберегти границі
         # знайдені детектором (не зливати великі сегменти через них)
         merged_segments = self._merge_similar_segments(
-            segments, local_dist, boundary_positions=boundaries
+            segments, local_window, boundary_positions=boundaries
         )
 
         # V6 FIX #2: Гарантуємо мінімальну кількість кластерів
@@ -394,8 +416,7 @@ class SelfOrganizerV4:
                 continue
 
             # Розподіл кластера
-            cluster_dist = np.mean(local_dist[positions], axis=0)
-            cluster_dist = cluster_dist / max(cluster_dist.sum(), 1e-10)
+            cluster_dist = self._segment_distribution(seg_start, seg_end)
 
             # Статистика поля
             u_seg = self.field.u[positions]
@@ -416,16 +437,16 @@ class SelfOrganizerV4:
 
             # Оцінка якості кластера
             cluster['quality_score'] = self._compute_cluster_quality(
-                cluster, local_dist, clusters
+                cluster, clusters, local_window
             )
 
             clusters.append(cluster)
 
         # Злиття несуміжних кластерів зі схожими розподілами
-        clusters = self._merge_non_adjacent(clusters, local_dist)
+        clusters = self._merge_non_adjacent(clusters, N)
 
         # Усунення перекраттів (гарантуємо просторову когерентність)
-        clusters = self._ensure_non_overlapping(clusters, local_dist)
+        clusters = self._ensure_non_overlapping(clusters, local_window)
 
         # V6 FIX #2: Фінальна перевірка мінімуму кластерів.
         # _merge_non_adjacent може знову колапсувати все в 1 кластер
@@ -444,8 +465,7 @@ class SelfOrganizerV4:
                 positions = np.arange(seg_start, seg_end)
                 if len(positions) == 0:
                     continue
-                cluster_dist = np.mean(local_dist[positions], axis=0)
-                cluster_dist = cluster_dist / max(cluster_dist.sum(), 1e-10)
+                cluster_dist = self._segment_distribution(seg_start, seg_end)
                 u_seg = self.field.u[positions]
                 v_seg = self.field.v[positions]
                 cluster = {
@@ -500,8 +520,8 @@ class SelfOrganizerV4:
     def _compute_cluster_quality(
         self,
         cluster: Dict,
-        local_dist: np.ndarray,
         existing_clusters: List[Dict],
+        local_window: int,
     ) -> float:
         """
         Обчислення оцінки якості кластера.
@@ -520,7 +540,10 @@ class SelfOrganizerV4:
             # Порівнюємо кожну позицію з середнім розподілом кластера
             coherence_values = []
             for pos in positions[::max(1, size // 10)]:  # Вибірка для ефективності
-                js = self.compute_js_divergence(local_dist[pos], cluster_dist)
+                js = self.compute_js_divergence(
+                    self._local_distribution_at(int(pos), local_window),
+                    cluster_dist,
+                )
                 coherence_values.append(js)
             coherence = np.mean(coherence_values) if coherence_values else 0.0
         else:
@@ -529,11 +552,9 @@ class SelfOrganizerV4:
         # 2. Зовнішня відмінність
         distinctness = 0.0
         if len(existing_clusters) > 0:
-            js_values = []
-            for other in existing_clusters:
-                js = self.compute_js_divergence(cluster_dist, other['distribution'])
-                js_values.append(js)
-            distinctness = min(js_values) if js_values else 0.0
+            existing_dists = np.vstack([other['distribution'] for other in existing_clusters])
+            js_values = _js_divergence_many(cluster_dist, existing_dists)
+            distinctness = float(np.min(js_values)) if js_values.size else 0.0
 
         # 3. Просторова компактність
         span = cluster['end'] - cluster['start']
@@ -552,7 +573,7 @@ class SelfOrganizerV4:
         return float(quality_normalized)
 
     def _merge_similar_segments(
-        self, segments: List[Tuple[int, int]], local_dist: np.ndarray,
+        self, segments: List[Tuple[int, int]], local_window: int,
         js_threshold: float = 0.15,
         boundary_positions: Optional[np.ndarray] = None,
     ) -> List[Tuple[int, int]]:
@@ -575,7 +596,7 @@ class SelfOrganizerV4:
         if len(segments) <= 1:
             return segments
 
-        N = local_dist.shape[0]
+        N = self.field.N
         merge_policy = self.numeric_policy.cluster_policy(N)
         js_threshold = float(merge_policy['adjacent_js_threshold'])
         # V6 FIX #2: Мінімальний розмір самостійного сегмента адаптований
@@ -611,14 +632,8 @@ class SelfOrganizerV4:
                 merged.append((seg_start, seg_end))
                 continue
 
-            prev_positions = np.arange(prev_start, prev_end)
-            curr_positions = np.arange(seg_start, seg_end)
-
-            prev_dist = np.mean(local_dist[prev_positions], axis=0)
-            curr_dist = np.mean(local_dist[curr_positions], axis=0)
-
-            prev_dist = prev_dist / max(prev_dist.sum(), 1e-10)
-            curr_dist = curr_dist / max(curr_dist.sum(), 1e-10)
+            prev_dist = self._segment_distribution(prev_start, prev_end)
+            curr_dist = self._segment_distribution(seg_start, seg_end)
 
             js = self.compute_js_divergence(prev_dist, curr_dist)
 
@@ -656,7 +671,7 @@ class SelfOrganizerV4:
     def _merge_non_adjacent(
         self,
         clusters: List[Dict],
-        local_dist: np.ndarray,
+        data_length: int,
         js_threshold: float = 0.10,
     ) -> List[Dict]:
         """
@@ -688,22 +703,24 @@ class SelfOrganizerV4:
             return clusters
 
         # Обчислюємо всі попарні JS дивергенції (не-сусідні)
-        js_values = []
+        cluster_dists = np.vstack([c['distribution'] for c in clusters])
+        pair_js = []
         for i in range(n):
-            for j in range(i + 2, n):  # Пропускаємо сусідні (j=i+1)
-                js = self.compute_js_divergence(
-                    clusters[i]['distribution'], clusters[j]['distribution']
-                )
-                js_values.append(js)
+            if i + 2 >= n:
+                continue
+            js_row = _js_divergence_many(cluster_dists[i], cluster_dists[i + 2:])
+            for j_offset, js in enumerate(js_row, start=i + 2):
+                pair_js.append((i, j_offset, float(js)))
 
-        if not js_values:
+        if not pair_js:
             for i, c in enumerate(clusters):
                 c['pattern_group'] = i
             return clusters
 
         # Адаптивний поріг: мінімум з (фіксованого, 25-й перцентиль JS)
+        js_values = [js for _, _, js in pair_js]
         js_array = np.array(js_values)
-        merge_policy = self.numeric_policy.cluster_policy(local_dist.shape[0], js_values)
+        merge_policy = self.numeric_policy.cluster_policy(data_length, js_values)
         adaptive_threshold = min(
             float(merge_policy['non_adjacent_js_threshold']),
             float(np.percentile(js_array, 25)),
@@ -711,7 +728,7 @@ class SelfOrganizerV4:
         adaptive_threshold = max(adaptive_threshold, 0.01)
         self.last_cluster_policy.update({
             'non_adjacent_js_threshold_effective': float(adaptive_threshold),
-            'non_adjacent_js_pairs': int(len(js_values)),
+            'non_adjacent_js_pairs': int(len(pair_js)),
         })
 
         # Побудова міток груп через Union-Find
@@ -729,13 +746,9 @@ class SelfOrganizerV4:
                 group[rx] = ry
 
         # Групування кластерів зі схожими розподілами
-        for i in range(n):
-            for j in range(i + 2, n):
-                js = self.compute_js_divergence(
-                    clusters[i]['distribution'], clusters[j]['distribution']
-                )
-                if js < adaptive_threshold:
-                    union(i, j)
+        for i, j, js in pair_js:
+            if js < adaptive_threshold:
+                union(i, j)
 
         # Призначаємо pattern_group мітки (але НЕ зливаємо кластери!)
         group_map = {}
@@ -768,7 +781,7 @@ class SelfOrganizerV4:
         return blocks
 
     def _ensure_non_overlapping(
-        self, clusters: List[Dict], local_dist: np.ndarray,
+        self, clusters: List[Dict], local_window: int,
     ) -> List[Dict]:
         """
         Перевірка та усунення перекриттів між кластерами.
@@ -814,8 +827,7 @@ class SelfOrganizerV4:
                 u_seg = self.field.u[block_arr]
                 v_seg = self.field.v[block_arr]
 
-                block_dist = np.mean(local_dist[block_arr], axis=0)
-                block_dist = block_dist / max(block_dist.sum(), 1e-10)
+                block_dist = self._segment_distribution(start, end)
 
                 block_cluster = {
                     'positions': block_arr,

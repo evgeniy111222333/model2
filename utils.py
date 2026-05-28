@@ -1,7 +1,7 @@
 import numpy as np
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return np.where(x >= 0, 1.0 / (1.0 + np.exp(-x)), np.exp(x) / (1.0 + np.exp(x)))
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -50.0, 50.0)))
 
 def _js_divergence(p: np.ndarray, q: np.ndarray) -> float:
     p = np.maximum(p, 1e-10)

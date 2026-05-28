@@ -191,7 +191,9 @@ test_unicode_texts = [
 
 def is_valid_utf8_boundary(start: int, end: int, data: bytes) -> bool:
     """Check if cluster [start:end] doesn't cut UTF-8 sequences."""
-    if start > 0 and 0x80 <= data[start-1] <= 0xBF:
+    if start < 0 or end < start or end > len(data):
+        return False
+    if start < len(data) and 0x80 <= data[start] <= 0xBF:
         return False  # Starts with continuation
     if end < len(data) and 0x80 <= data[end] <= 0xBF:
         return False  # Ends in middle of sequence
