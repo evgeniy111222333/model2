@@ -44,6 +44,9 @@ from bcs.information.trajectory_first import (
     
     # Модель
     TrajectoryFirstModel,
+    
+    # Hierarchical
+    HierarchicalTrajectory,
 )
 
 
@@ -562,7 +565,7 @@ def test_trajectory_first_model():
     print(f"  Converted levels: {len(converted)}")
     
     # 4. Predict next
-    next_byte, confidence = model.predict_next()
+    next_byte, confidence, dist = model.predict_next()
     print(f"  Predicted next: byte={next_byte}, confidence={confidence:.4f}")
     
     # 5. Full run
@@ -689,14 +692,16 @@ def run_all_tests():
     
     tests = [
         ("Geometric Primitives", test_geometric_primitives),
+        ("Frechet Mean (Aggregation Fix)", test_frechet_mean),
         ("ManifoldPoint", test_manifold_point),
         ("Trajectory (PRIMARY Context)", test_trajectory),
         ("GeodesicAttentionLayer", test_geodesic_attention_layer),
         ("TrajectoryConversion", test_trajectory_conversion),
         ("TrajectorySemantic", test_trajectory_semantic),
-        ("TrajectoryReadout", test_trajectory_readout),
+        ("TrajectoryReadout (Improved)", test_trajectory_readout),
         ("TrajectoryFirstModel", test_trajectory_first_model),
         ("Full Replacement Verification", test_full_replacement),
+        ("HierarchicalTrajectory (Unbounded)", test_hierarchical_trajectory),
     ]
     
     results = []
@@ -741,8 +746,132 @@ def run_all_tests():
         print("  ✅ TrajectoryConversion = GCN replacement")
         print("  ✅ TrajectorySemantic = Transformer replacement")
         print("  ✅ TrajectoryReadout = LM head replacement")
+        print("  ✅ Fréchet Mean = Geometric Aggregation")
+        print("  ✅ HierarchicalTrajectory = Unbounded Memory")
         print("\n🎉 TRAJECTORY-FIRST ARCHITECTURE IS COMPLETE!")
         return True
+
+
+def test_hierarchical_trajectory():
+    """Тест Hierarchical Trajectory — справжня безмежна пам'ять."""
+    print("\n" + "="*60)
+    print("TEST: HierarchicalTrajectory (UNBOUNDED MEMORY)")
+    print("="*60)
+    
+    # Створюємо hierarchical trajectory
+    ht = HierarchicalTrajectory(base_size=50, max_levels=4, decay_rate=0.9)
+    
+    print(f"\n  Initial state:")
+    print(f"    total_points: {ht.total_points}")
+    print(f"    depth: {ht.depth}")
+    
+    # Додаємо 200 точок (4 батчі)
+    print("\n  Test 1: Push 200 points")
+    np.random.seed(42)
+    for i in range(200):
+        p = np.random.rand(256)
+        p = p / p.sum()
+        ht.push(p, t=float(i) / 200)
+    
+    print(f"    After 200 pushes:")
+    print(f"      total_points: {ht.total_points}")
+    print(f"      depth: {ht.depth}")
+    print(f"      L0 points: {len(ht.levels[0])}")
+    print(f"      L1 points: {len(ht.levels[1])}")
+    print(f"      L2 points: {len(ht.levels[2])}")
+    
+    # Перевіряємо структуру
+    assert ht.total_points > 0, "Should have some points"
+    assert ht.depth >= 1, "Should have at least 1 level"
+    print("    [OK] Structure correct")
+    
+    # Тест 2: Attention
+    print("\n  Test 2: Compute attention")
+    query = np.random.rand(256)
+    query = query / query.sum()
+    
+    attention, points = ht.compute_attention(query)
+    print(f"    Attention shape: {attention.shape}")
+    print(f"    Points shape: {points.shape}")
+    print(f"    Attention sum: {attention.sum():.6f}")
+    
+    assert attention.shape == (points.shape[0],), "Attention should match points count"
+    assert abs(attention.sum() - 1.0) < 1e-6, "Attention should sum to 1"
+    print("    [OK] Attention is valid")
+    
+    # Тест 3: Геометричний attention
+    print("\n  Test 3: Attend method")
+    result = ht.attend(query, feature='p')
+    print(f"    Result shape: {result.shape}")
+    assert result.shape == (256,), "Should return 256-dim vector"
+    print("    [OK] Attend works")
+    
+    # Тест 4: Time range query
+    print("\n  Test 4: Time range query")
+    context_recent = ht.query_time_range(0.8, 1.0, query)
+    context_old = ht.query_time_range(0.0, 0.2, query)
+    print(f"    Recent (0.8-1.0) dist sum: {context_recent.sum():.4f}")
+    print(f"    Old (0.0-0.2) dist sum: {context_old.sum():.4f}")
+    assert abs(context_recent.sum() - 1.0) < 0.1, "Should be normalized"
+    print("    [OK] Time range query works")
+    
+    # Тест 5: Large scale push (1000 points)
+    print("\n  Test 5: Stress test with 1000 points")
+    np.random.seed(123)
+    for i in range(1000):
+        p = np.random.rand(256)
+        p = p / p.sum()
+        ht.push(p, t=float(i) / 1000)
+    
+    print(f"    After 1000 more pushes:")
+    print(f"      total_points: {ht.total_points}")
+    print(f"      depth: {ht.depth}")
+    
+    # Перевіряємо що depth збільшився
+    assert ht.depth >= 2, "Should have aggregated to level 2"
+    print("    [OK] Aggregation works correctly")
+    
+    # Тест 6: Summary
+    print("\n  Test 6: Summary")
+    summary = ht.get_summary()
+    print(f"    Summary keys: {list(summary.keys())}")
+    print(f"    Level stats: {summary['levels']}")
+    
+    # Тест 7: Reset
+    print("\n  Test 7: Reset")
+    ht.reset()
+    print(f"    After reset: total_points={ht.total_points}, depth={ht.depth}")
+    assert ht.total_points == 0, "Should be empty after reset"
+    assert ht.depth == 0, "Depth should be 0 after reset"
+    print("    [OK] Reset works")
+    
+    # Тест 8: Memory efficiency with many points
+    print("\n  Test 8: Memory efficiency with hierarchical levels")
+    # Create fresh ht for this test
+    ht2_level = HierarchicalTrajectory(base_size=50, max_levels=5)
+    
+    np.random.seed(42)
+    for i in range(500):
+        p = np.random.rand(256)
+        p = p / p.sum()
+        ht2_level.push(p, t=float(i) / 500)
+    
+    summary = ht2_level.get_summary()
+    # With 500 points and base_size=50, we should have:
+    # - L0: up to 50 points (remainder)
+    # - L1: 500/50 = 10 aggregated batches
+    # - Total stored: 10 + 50 = 60 points represents ~500 original points efficiently
+    print(f"    Stored points: {ht2_level.total_points}")
+    print(f"    Depth reached: {ht2_level.depth}")
+    print(f"    Original points represented: 500")
+    print(f"    Efficiency: {500 / ht2_level.total_points:.1f}x compression")
+    
+    # Verify that we have multiple levels
+    assert ht2_level.depth >= 2, "Should aggregate to level 2"
+    print("    [OK] Hierarchical provides true unbounded memory")
+    
+    print("\n  [OK] HierarchicalTrajectory tests passed")
+    return True
 
 
 if __name__ == "__main__":

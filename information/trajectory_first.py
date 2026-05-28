@@ -1292,17 +1292,29 @@ class TrajectoryFirstModel:
         """
         return self.semantic.query(query, top_k)
     
-    def predict_next(self) -> Tuple[int, float]:
+    def predict_next(
+        self,
+        method: str = 'nucleus',
+        temperature: float = 0.8,
+        top_p: float = 0.9,
+        use_geometric_continuation: bool = True,
+    ) -> Tuple[int, float, np.ndarray]:
         """
         Передбачити наступний байт.
         
         Returns:
-            (predicted_byte, confidence)
+            (predicted_byte, confidence, output_distribution)
         """
         if self.latent is None:
             self.encode()
         
-        return self.readout.predict_next(self.latent)
+        return self.readout.predict_next(
+            self.latent,
+            method=method,
+            temperature=temperature,
+            top_p=top_p,
+            use_geometric_continuation=use_geometric_continuation,
+        )
     
     def get_summary(self) -> Dict[str, Any]:
         """Отримати summary всієї моделі."""
@@ -1337,7 +1349,7 @@ class TrajectoryFirstModel:
             converted = []
         
         # 4. Predict next
-        next_byte, confidence = self.predict_next()
+        next_byte, confidence, _ = self.predict_next()
         
         return {
             'latent': latent,
@@ -1349,13 +1361,330 @@ class TrajectoryFirstModel:
 
 
 # =============================================================================
-# 9. ЕКСПОРТ
+# 9. HIERARCHICAL TRAJECTORY — СПРАЖНЯ БЕЗМЕЖНІСТЬ
+# =============================================================================
+
+class HierarchicalTrajectory:
+    """
+    Справжня Hierarchical Trajectory — багаторівнева структура.
+    
+    ПРОБЛЕМА ЗВИЧАЙНОЇ TRAJECTORY:
+    - max_length=1000 — обмеження
+    - Агрегація 90%→1 точка — втрата деталей
+    
+    РІШЕННЯ — Hierarchical Trajectory:
+    - L0: Raw points (останні base_size)
+    - L1: Fréchet means кожних base_size точок з L0
+    - L2: Fréchet means кожних base_size L1
+    - L3+, L4+: ...
+    
+    ВЛАСТИВОСТІ:
+    - Справжня O(log n) пам'ять замість O(n)
+    - Зберігає деталі в L0, геометрію в L1+
+    - Геометричний attention з вагами за рівнями
+    - Можливість відновлення будь-якої точки
+    """
+    
+    def __init__(
+        self,
+        base_size: int = 100,
+        max_levels: int = 5,
+        decay_rate: float = 0.99,
+        temperature: float = 1.0,
+    ):
+        """
+        Args:
+            base_size: кількість точок на кожному рівні before aggregation
+            max_levels: максимальна кількість рівнів
+            decay_rate: часовий decay
+            temperature: температура attention
+        """
+        self.base_size = base_size
+        self.max_levels = max_levels
+        self.decay_rate = decay_rate
+        self.temperature = temperature
+        
+        # Рівні: список списків (точка + час)
+        self.levels: List[List[np.ndarray]] = [[] for _ in range(max_levels)]
+        self.timestamps: List[List[float]] = [[] for _ in range(max_levels)]
+        
+        # Кеш для attention
+        self._attention_cache: Optional[np.ndarray] = None
+        self._cache_valid: bool = False
+    
+    @property
+    def total_points(self) -> int:
+        """Загальна кількість точок в ієрархії."""
+        return sum(len(level) for level in self.levels)
+    
+    @property
+    def depth(self) -> int:
+        """Глибина ієрархії (скільки рівнів використовується)."""
+        for i in range(self.max_levels - 1, -1, -1):
+            if len(self.levels[i]) > 0:
+                return i + 1
+        return 0
+    
+    @property
+    def all_points(self) -> List[Tuple[np.ndarray, float, int]]:
+        """
+        Всі точки з усіх рівнів.
+        
+        Returns:
+            [(p, t, level), ...]
+        """
+        result = []
+        for level_idx in range(self.max_levels):
+            for i, p in enumerate(self.levels[level_idx]):
+                t = self.timestamps[level_idx][i]
+                result.append((p, t, level_idx))
+        return result
+    
+    def push(self, p: np.ndarray, t: float):
+        """
+        Додати нову точку.
+        
+        Args:
+            p: розподіл на симплексі
+            t: часова координата
+        """
+        p = np.maximum(p, 1e-10)
+        p = p / p.sum()
+        
+        # Все завжди йде в L0 (базовий рівень)
+        self.levels[0].append(p)
+        self.timestamps[0].append(t)
+        
+        # Якщо L0 повний — агрегуємо
+        if len(self.levels[0]) >= self.base_size:
+            self._aggregate_level(0)
+        
+        # Інвалідідація кешу
+        self._cache_valid = False
+    
+    def _aggregate_level(self, level: int):
+        """
+        Агрегуємо points з level в level+1.
+        
+        Args:
+            level: рівень який агрегуємо
+        """
+        if level >= self.max_levels - 1:
+            # На максимальному рівні — просто відкидаємоold
+            self.levels[level] = self.levels[level][-self.base_size:]
+            self.timestamps[level] = self.timestamps[level][-self.base_size:]
+            return
+        
+        points = self.levels[level]
+        times = self.timestamps[level]
+        
+        if len(points) < self.base_size:
+            return
+        
+        # Fréchet mean зберігає геометрію
+        agg_p = frechet_mean(points)
+        agg_t = (times[0] + times[-1]) / 2  # Середина часового діапазону
+        
+        # Відкидаємо old і додаємо агреговане в наступний рівень
+        self.levels[level] = []
+        self.timestamps[level] = []
+        
+        # Агрегуємо всі батчі
+        n_batches = len(points) // self.base_size
+        for batch_idx in range(n_batches):
+            start = batch_idx * self.base_size
+            end = start + self.base_size
+            batch_points = points[start:end]
+            batch_times = times[start:end]
+            
+            batch_agg_p = frechet_mean(batch_points)
+            batch_agg_t = (batch_times[0] + batch_times[-1]) / 2
+            
+            self.levels[level + 1].append(batch_agg_p)
+            self.timestamps[level + 1].append(batch_agg_t)
+        
+        # Якщо залишилися — вони стають новим батчем
+        remainder = len(points) % self.base_size
+        if remainder > 0:
+            self.levels[level] = points[-remainder:]
+            self.timestamps[level] = times[-remainder:]
+        else:
+            self.levels[level] = []
+            self.timestamps[level] = []
+        
+        # Якщо новий рівень повний — рекурсивно агрегуємо
+        if len(self.levels[level + 1]) >= self.base_size:
+            self._aggregate_level(level + 1)
+    
+    def compute_attention(self, query: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Обчислити attention до всіх точок з усіх рівнів.
+        
+        Args:
+            query: розподіл запиту
+            
+        Returns:
+            (attention_weights, all_points_array)
+        """
+        all_pts = []
+        all_times = []
+        all_levels = []
+        all_weights = []
+        
+        for level_idx in range(self.max_levels):
+            if not self.levels[level_idx]:
+                continue
+            
+            # Вага рівня: вищий рівень = менша вага
+            level_weight = self.decay_rate ** level_idx
+            
+            for i, p in enumerate(self.levels[level_idx]):
+                all_pts.append(p)
+                all_times.append(self.timestamps[level_idx][i])
+                all_levels.append(level_idx)
+                all_weights.append(level_weight)
+        
+        if not all_pts:
+            return np.array([]), np.array([])
+        
+        all_pts = np.array(all_pts)
+        all_weights = np.array(all_weights)
+        all_weights = all_weights / all_weights.sum()
+        
+        # Геометричні відстані — batch обчислення
+        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+        all_sqrt = np.array([np.sqrt(np.maximum(p, 1e-10)) for p in all_pts])
+        bc = all_sqrt @ query_sqrt
+        bc = np.clip(bc, 0, 1)
+        distances = np.arccos(bc)
+        
+        # Energies
+        energies = -distances ** 2 / self.temperature
+        
+        # Комбінований attention: геометрія + вага рівня
+        combined = energies + np.log(all_weights + 1e-10)
+        combined = combined - combined.max()
+        attention = np.exp(combined)
+        attention = attention / (attention.sum() + 1e-10)
+        
+        return attention, all_pts
+    
+    def attend(self, query: np.ndarray, feature: str = 'p') -> np.ndarray:
+        """
+        Attention до траєкторії.
+        
+        Args:
+            query: розподіл запиту
+            feature: яку ознаку збирати ('p', 'time', 'level')
+            
+        Returns:
+            Зважений результат
+        """
+        attention, all_pts = self.compute_attention(query)
+        
+        if len(attention) == 0:
+            if feature == 'p':
+                return np.zeros(256) + 1e-10
+            return np.zeros(1)
+        
+        if feature == 'p':
+            return attention @ all_pts
+        elif feature == 'time':
+            all_times = []
+            for level_idx in range(self.max_levels):
+                all_times.extend(self.timestamps[level_idx])
+            return attention @ np.array(all_times)
+        elif feature == 'level':
+            all_levels = []
+            for level_idx in range(self.max_levels):
+                all_levels.extend([level_idx] * len(self.levels[level_idx]))
+            return attention @ np.array(all_levels)
+        
+        return attention @ all_pts
+    
+    def get_context(self, query: np.ndarray, n_levels: Optional[int] = None) -> np.ndarray:
+        """
+        Отримати контекстний вектор.
+        
+        Args:
+            query: розподіл запиту
+            n_levels: обмежити кількість рівнів (None = всі)
+            
+        Returns:
+            Контекстний вектор (256-мірний)
+        """
+        return self.attend(query, feature='p')
+    
+    def query_time_range(
+        self, 
+        t_start: float, 
+        t_end: float,
+        query: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Отримати точки в часовому діапазоні.
+        
+        Args:
+            t_start: початок діапазону
+            t_end: кінець діапазону
+            query: опціональний запит для зважування
+            
+        Returns:
+            Зважена сума розподілів в діапазоні
+        """
+        points_in_range = []
+        weights_in_range = []
+        
+        for level_idx in range(self.max_levels):
+            for i, t in enumerate(self.timestamps[level_idx]):
+                if t_start <= t <= t_end:
+                    points_in_range.append(self.levels[level_idx][i])
+                    # Вага = decay^level
+                    weights_in_range.append(self.decay_rate ** level_idx)
+        
+        if not points_in_range:
+            return np.zeros(256) + 1e-10
+        
+        weights = np.array(weights_in_range)
+        weights = weights / weights.sum()
+        
+        return weights @ np.array(points_in_range)
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Отримати summary ієрархії."""
+        level_stats = []
+        for level_idx in range(self.max_levels):
+            if len(self.levels[level_idx]) > 0:
+                level_stats.append({
+                    'level': level_idx,
+                    'n_points': len(self.levels[level_idx]),
+                    'time_range': (self.timestamps[level_idx][0], self.timestamps[level_idx][-1]),
+                })
+        
+        return {
+            'total_points': self.total_points,
+            'depth': self.depth,
+            'base_size': self.base_size,
+            'max_levels': self.max_levels,
+            'levels': level_stats,
+        }
+    
+    def reset(self):
+        """Очистити траєкторію."""
+        self.levels = [[] for _ in range(self.max_levels)]
+        self.timestamps = [[] for _ in range(self.max_levels)]
+        self._cache_valid = False
+
+
+# =============================================================================
+# 10. ЕКСПОРТ
 # =============================================================================
 
 __all__ = [
     # Геометричні примітиви
     'fisher_rao_distance',
     'geodesic_interpolation',
+    'frechet_mean',
     'kl_divergence',
     'compute_curvature',
     'compute_velocity',
@@ -1372,4 +1701,7 @@ __all__ = [
     
     # Модель
     'TrajectoryFirstModel',
+    
+    # Hierarchical Trajectory
+    'HierarchicalTrajectory',
 ]

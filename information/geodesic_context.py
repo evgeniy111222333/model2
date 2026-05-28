@@ -671,10 +671,14 @@ class GeodesicContextEngine:
         """
         Виявлення новизни через геометрію траєкторії.
         
-        Замість порогових евристик — геометрична новизна:
-        1. Відстань до центроїда траєкторії
-        2. Кривина в поточній точці
-        3. Швидкість зміни
+        ВИПРАВЛЕНО: враховує не тільки відстань до центроїда,
+        а й наявність подібних точок в історії.
+        
+        Formula:
+        novelty = w1 * nearest_neighbor_score + w2 * curvature_score + w3 * velocity_score
+        
+        Де nearest_neighbor_score = 0 якщо є близька точка (d < threshold),
+        інакше = min(1, d_to_nearest / threshold)
         
         Returns:
             (novelty_score, confidence)
@@ -682,29 +686,60 @@ class GeodesicContextEngine:
         if len(self.points) == 0:
             return 1.0, 1.0  # Перша точка = максимальна новизна
         
-        # 1. Відстань до центроїда
+        eps = 1e-10
+        p = np.maximum(p, eps)
+        p = p / p.sum()
+        p_sqrt = np.sqrt(p)
+        
+        # 1. ВІДСТАНЬ ДО НАЙБЛИЖЧОЇ ТОЧКИ (головне!)
+        # Це вирішує проблему: "відоме і нове далекі від центроїда, але одне є в історії"
+        if len(self.points) > 0:
+            all_sqrt = np.array([np.sqrt(np.maximum(pt.p, eps)) for pt in self.points])
+            bc = all_sqrt @ p_sqrt
+            bc = np.clip(bc, 0, 1)
+            distances = np.arccos(bc)
+            
+            nearest_dist = float(np.min(distances))
+            nearest_idx = int(np.argmin(distances))
+            
+            # Поріг для "подібності": d < 0.3 rad (~17 градусів) = подібне
+            SIMILARITY_THRESHOLD = 0.3
+            novelty_threshold = 0.5
+            
+            if nearest_dist < novelty_threshold:
+                # Є близька точка в історії → НЕ новизна
+                nn_score = nearest_dist / novelty_threshold
+            else:
+                # Немає близької точки → ПОТЕНЦІЙНА НОВИЗНА
+                # Але перевіряємо чи це просто далеко від усього
+                nn_score = 1.0  # Максимальна новизна за这段惩罚
+        else:
+            nearest_dist = 0.0
+            nn_score = 0.5
+        
+        # 2. Відстань до центроїда (додатковий фактор)
         if self.memory_centroid is not None:
             dist_to_center = fisher_rao_distance(p, self.memory_centroid)
-            dist_score = min(1.0, dist_to_center / (self.memory_span + 0.1))
+            center_score = min(1.0, dist_to_center / (self.memory_span + 0.1))
         else:
-            dist_score = 0.5
+            center_score = 0.5
         
-        # 2. Кривина
+        # 3. Кривина
         if len(self.curvature_profile) > 0 and self.enable_curvature:
             recent_curvatures = self.curvature_profile[-3:] if len(self.curvature_profile) >= 3 else self.curvature_profile
             curvature_score = min(1.0, np.mean(recent_curvatures) * 5)
         else:
             curvature_score = 0.0
         
-        # 3. Швидкість
+        # 4. Швидкість
         if len(self.velocity_profile) > 0:
             recent_velocities = self.velocity_profile[-3:] if len(self.velocity_profile) >= 3 else self.velocity_profile
             velocity_score = min(1.0, np.mean(recent_velocities) * 10)
         else:
             velocity_score = 0.0
         
-        # Комбінована оцінка
-        novelty = 0.4 * dist_score + 0.3 * curvature_score + 0.3 * velocity_score
+        # Комбінована оцінка з вагою НАЙБЛИЖЧОЇ ТОЧКИ як головний фактор
+        novelty = 0.5 * nn_score + 0.2 * center_score + 0.15 * curvature_score + 0.15 * velocity_score
         novelty = min(1.0, novelty)
         
         # Впевненість: чим більше історії, тим вища

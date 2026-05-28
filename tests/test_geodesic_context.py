@@ -497,31 +497,35 @@ def test_e2e_with_model():
     # Run — це основний тест, чи все працює разом
     results = model.run(n_steps=50, record_every=25)
     
-    # Перевірка результатів
-    assert 'geodesic_context' in results, "Should have geodesic_context results"
-    assert 'geodesic_context_engine' in results, "Should have geodesic_context_engine summary"
+    # Перевірка результатів — HierarchicalTrajectory тепер PRIMARY
+    assert 'hierarchical_trajectory' in results or 'hierarchical_trajectory_engine' in results, \
+        "Should have hierarchical_trajectory results"
+    assert 'hierarchical_trajectory_engine' in results, \
+        "Should have hierarchical_trajectory_engine summary"
     
-    geo_ctx = results['geodesic_context']
-    if geo_ctx:
-        print(f"  Geodesic context: n_points={geo_ctx.get('n_points', 0)}")
-        print(f"  Geodesic length: {geo_ctx.get('total_geodesic_length', 0):.2f}")
-        shapes = geo_ctx.get('semantic_shapes', {})
-        print(f"  Shapes: loops={shapes.get('n_loops', 0)}, "
-              f"angles={shapes.get('n_angles', 0)}, "
-              f"stops={shapes.get('n_stops', 0)}")
-    
-    geo_engine = results.get('geodesic_context_engine', {})
-    if geo_engine:
-        print(f"  GeodesicContextEngine: {geo_engine.get('n_points', 0)} точок")
+    # Нові ключі для HierarchicalTrajectory
+    ht_result = results.get('hierarchical_trajectory') or results.get('hierarchical_trajectory_engine')
+    if ht_result:
+        print(f"  Hierarchical trajectory: total_points={ht_result.get('total_points', 0)}")
+        print(f"  Hierarchical depth: {ht_result.get('depth', 0)}")
+        levels = ht_result.get('levels', [])
+        print(f"  Hierarchical levels: {len(levels)}")
+        for lvl_info in levels:
+            print(f"    L{lvl_info.get('level', 0)}: {lvl_info.get('n_points', 0)} points")
     
     # Перевірка geodesic attention у conversion levels
-    if 'geodesic_attention_summary' in results:
-        summary = results['geodesic_attention_summary']
-        print(f"  GeodesicAttention: {summary.get('n_levels_enhanced', 0)} рівнів з enhanced attention")
+    if 'conversion_levels' in results:
+        conv_levels = results['conversion_levels']
+        geo_enhanced = sum(1 for l in conv_levels if l.get('geodesic_enhanced'))
+        print(f"  Geodesic-enhanced levels: {geo_enhanced}")
+        assert geo_enhanced > 0, "At least one level should be geodesic-enhanced"
+    if 'hierarchical_attention_summary' in results:
+        summary = results['hierarchical_attention_summary']
+        print(f"  HierarchicalAttention: {summary.get('n_levels_enhanced', 0)} рівнів з enhanced attention")
     
-    # Перевірка semantic injection
-    if 'geodesic_semantic_injection' in results:
-        print(f"  Semantic injection: success")
+    # Перевірка trajectory context injection
+    if 'trajectory_context' in results:
+        print(f"  Trajectory context: injected into semantic layer")
     
     print("  [OK] End-to-end model tests passed")
     return True

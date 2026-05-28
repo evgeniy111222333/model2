@@ -18,6 +18,7 @@ from bcs.information.manifold_trajectory import (
     CurvatureNoveltyDetector,
     MemoryAsSubmanifold,
 )
+from bcs.information.trajectory_first import HierarchicalTrajectory
 from bcs.information.geodesic_integration import TrajectoryContextIntegration
 from bcs.optimization.optimization import MultiTimescaleOptimizer, CMAESOptimizer, TimeScaleSystem
 from bcs.perception.predictive import HierarchicalPredictiveCoding, PredictiveCoding
@@ -179,30 +180,36 @@ class BCSModelV6:
         self.sequence_memory = SequenceAssociativeMemory() if use_sequence_memory else None
         self.semantic_dynamics = SemanticLatentDynamics() if use_semantic_dynamics else None
         self.semantic_readout = SemanticQueryReadout() if use_semantic_readout else None
-        # V8: Manifold Trajectory
+        
+        # =====================================================================
+        # V10: HIERARCHICAL TRAJECTORY — ЄДИНИЙ КОНТЕКСТ (заміна window/buffer)
+        # =====================================================================
+        # Це ПОВНА ЗАМІНА window-based context.
+        # Всі дані проходять через HierarchicalTrajectory.
+        # Немає max_length обмеження, немає window buffer.
+        self.hierarchical_trajectory: Optional[HierarchicalTrajectory] = None
+        if use_geodesic_context:  # Використовуємо той же флаг
+            try:
+                self.hierarchical_trajectory = HierarchicalTrajectory(
+                    base_size=100,
+                    max_levels=5,
+                    decay_rate=0.99,
+                    temperature=1.0,
+                )
+                print("   HierarchicalTrajectory: УВІМКНЕНО (ЄДИНИЙ контекст)")
+            except Exception as e:
+                print(f"   HierarchicalTrajectory: ПОМИЛКА ініціалізації — {e}")
+                self.hierarchical_trajectory = None
+        
+        # V8: Manifold Trajectory (secondary, если hierarchical увімкнено)
         self.manifold_trajectory = ManifoldTrajectory(
             max_length=500,
             decay_rate=0.99,
             novelty_threshold=0.5,
-        ) if use_manifold_trajectory else None
+        ) if (use_manifold_trajectory and not use_geodesic_context) else None
         
-        # V9: Geodesic Context Engine (ПОВНА ЗАМІНА window-based context)
+        # V9: Geodesic Context Engine — ВИДАЛЕНО (HierarchicalTrajectory вклює його функціональність)
         self.geodesic_context: Optional[TrajectoryContextIntegration] = None
-        if use_geodesic_context:
-            try:
-                self.geodesic_context = TrajectoryContextIntegration(
-                    self,  # передаємо модель
-                    config={
-                        'temperature': 1.0,
-                        'decay_rate': 0.99,
-                        'max_trajectory_length': 1000,
-                        'novelty_threshold': 0.5,
-                    }
-                )
-                print("   GeodesicContext: УВІМКНЕНО (траєкторія замість вікна)")
-            except Exception as e:
-                print(f"   GeodesicContext: ПОМИЛКА ініціалізації — {e}")
-                self.geodesic_context = None
 
         # V6 компоненти
         self.dynamic_embedding = DynamicByteEmbedding(
@@ -501,20 +508,19 @@ class BCSModelV6:
             'v5_phase_analysis': {},
             'v5_fisher_stats': {},
             'v5_hpc_errors': [],
-            'manifold_trajectory': None,  # V8: буде заповнено пізніше
-            'geodesic_context': None,  # V9: Geodesic Context Engine
+            'manifold_trajectory': None,  # V8: secondary
+            'hierarchical_trajectory': None,  # V10: PRIMARY
+            'geodesic_context': None,  # V9: deprecated, use hierarchical
         }
-
-        # V9: Geodesic Context Engine — повна заміна window-based context
-        if self.use_geodesic_context and self.geodesic_context is not None:
+        
+        # =====================================================================
+        # V10: HierarchicalTrajectory — PRIMARY CONTEXT (заміна window/buffer)
+        # =====================================================================
+        if self.hierarchical_trajectory is not None:
             # Ініціалізуємо траєкторію з субстрату
-            self.geodesic_context.initialize(self.substrate.raw_data)
-            print(f"   🌀 GeodesicContext: ініціалізовано {len(self.geodesic_context)} точок")
-            
-            # Додаємо кожну позицію як окрему точку
             one_hot = self.substrate.one_hot
-            n_points = min(100, self.substrate.length)
-            step = max(1, self.substrate.length // n_points)
+            n_points = min(200, self.substrate.length)
+            step = max(1, self.substrate.length // n_points) if n_points > 0 else 1
             
             for i in range(0, self.substrate.length, step):
                 half_w = 8
@@ -525,21 +531,18 @@ class BCSModelV6:
                 if local_dist.sum() > 0:
                     local_dist = local_dist / local_dist.sum()
                 
-                modality = self._detect_local_modality(local_dist) if hasattr(self, '_detect_local_modality') else 'unknown'
+                # Час нормалізований [0, 1]
+                t_norm = float(i) / max(1, self.substrate.length)
                 
-                self.geodesic_context.context_engine.push(
+                self.hierarchical_trajectory.push(
                     p=local_dist.astype(np.float64),
-                    t=float(i) / self.substrate.length,
-                    position=i,
-                    modality=modality,
-                    metadata={'step': i}
+                    t=t_norm,
                 )
             
-            ctx_summary = self.geodesic_context.get_context_summary()
-            results['geodesic_context'] = ctx_summary
-            print(f"   🌀 GeodesicContext: {ctx_summary.get('n_points', 0)} точок, "
-                  f"довжина={ctx_summary.get('total_geodesic_length', 0):.2f}, "
-                  f"Betti_1={ctx_summary.get('topology', {}).get('betti_1', 0)}")
+            traj_summary = self.hierarchical_trajectory.get_summary()
+            results['hierarchical_trajectory'] = traj_summary
+            print(f"   📊 HierarchicalTrajectory: {traj_summary['total_points']} точок, "
+                  f"depth={traj_summary['depth']}, base_size={traj_summary['base_size']}")
         if self.use_manifold_trajectory and self.manifold_trajectory is not None:
             # Створити траєкторію з розподілу байтів субстрату
             substrate_dist = self.substrate.byte_distribution.copy()
@@ -862,8 +865,8 @@ class BCSModelV6:
 
         results['conversion_levels'] = conv
         
-        # V9: Geodesic Attention — інтеграція в конвертаційні шари
-        if self.use_geodesic_context and self.geodesic_context is not None and conv is not None:
+        # V9: Geodesic Attention — інтеграція в конвертаційні шари (тепер через HierarchicalTrajectory)
+        if self.hierarchical_trajectory is not None and conv is not None:
             # Застосовуємо геодезичний attention до конвертованих рівнів
             for level_idx, level_data in enumerate(conv):
                 items = level_data.get('items', [])
@@ -876,17 +879,28 @@ class BCSModelV6:
                     for item_idx, item in enumerate(items):
                         query = reprs[item_idx] if item_idx < len(reprs) else np.zeros(256)
                         
-                        # Викликаємо trajectory attention
-                        output, attention = self.geodesic_context.trajectory_attention.forward(
-                            query=query,
-                            keys=reprs,
-                            values=reprs,
-                        )
+                        # Геометричне зважування на основі Fisher-Rao відстані
+                        # Замість повного trajectory attention - просто відстані до кластерів
+                        query_sqrt = np.sqrt(np.maximum(query, 1e-10))
+                        all_repr_sqrt = np.array([np.sqrt(np.maximum(r, 1e-10)) for r in reprs])
                         
-                        # Додаємо геометричну інформацію
-                        item['geodesic_attention'] = attention.tolist()
-                        item['geodesic_context'] = output.tolist()
-                        item['attention_entropy'] = float(-np.sum(attention * np.log(attention + 1e-10)))
+                        # Bhattacharyya coefficients (geodesic similarities)
+                        bc = all_repr_sqrt @ query_sqrt
+                        bc = np.clip(bc, 0, 1)
+                        distances = np.arccos(bc)
+                        
+                        # Attention weights
+                        energies = -distances ** 2 / 1.0  # temperature = 1.0
+                        energies = energies - energies.max()
+                        attention = np.exp(energies)
+                        attention = attention / (attention.sum() + 1e-10)
+                        
+                        # Output = зважена сума представлень
+                        if len(attention) > 0 and len(reprs) > 0:
+                            output = attention @ np.array(reprs)
+                            item['geodesic_attention'] = attention.tolist()
+                            item['geodesic_context'] = output.tolist()
+                            item['attention_entropy'] = float(-np.sum(attention * np.log(attention + 1e-10)))
                     
                     # Оновлюємо рівень
                     level_data['geodesic_enhanced'] = True
@@ -895,13 +909,13 @@ class BCSModelV6:
                     ])
             
             # Геодезичний summary
-            geo_summary = self.geodesic_context.get_summary()
-            results['geodesic_attention_summary'] = {
+            traj_summary = self.hierarchical_trajectory.get_summary()
+            results['hierarchical_attention_summary'] = {
                 'n_levels_enhanced': sum(1 for l in conv if l.get('geodesic_enhanced')),
                 'mean_entropy': np.mean([l.get('mean_attention_entropy', 0) for l in conv]),
-                'context_engine_summary': geo_summary,
+                'trajectory_summary': traj_summary,
             }
-            print(f"   🌀 GeodesicAttention: {sum(1 for l in conv if l.get('geodesic_enhanced'))} рівнів з enhanced attention")
+            print(f"   📊 HierarchicalTrajectory Attention: {sum(1 for l in conv if l.get('geodesic_enhanced'))} рівнів з enhanced attention")
 
         # V5/V6 FIX: Фінальний крок ієрархічного предиктивного кодування
         if self.use_hierarchical_pc and self.hierarchical_pc is not None and conv is not None:
@@ -985,39 +999,33 @@ class BCSModelV6:
             )
             results['v9_semantic_dynamics'] = semantic_result
             
-            # V9: Інтеграція geodesic context в семантичний шар
-            if self.use_geodesic_context and self.geodesic_context is not None:
-                ctx_vector = self.geodesic_context.get_trajectory_context()
-                inj_result = self.geodesic_context.inject_trajectory_into_semantic(
-                    self.semantic_dynamics,
-                    context_vector=ctx_vector,
+            # V10: Інтеграція HierarchicalTrajectory в семантичний шар
+            if self.hierarchical_trajectory is not None:
+                # Отримуємо контекст з HierarchicalTrajectory
+                ctx_vector = self.hierarchical_trajectory.attend(
+                    np.mean([p for p, t, lvl in self.hierarchical_trajectory.all_points], axis=0)
+                    if self.hierarchical_trajectory.total_points > 0 else np.zeros(256)
                 )
-                results['geodesic_semantic_injection'] = inj_result
+                results['trajectory_context'] = ctx_vector.tolist()
                 
-                # Додаємо trajectory features до семантичного результату
-                if 'trajectory_features' in inj_result:
-                    for key, value in inj_result['trajectory_features'].items():
-                        semantic_result[f'geo_{key}'] = value
-            
-            if self.use_semantic_readout and self.semantic_readout is not None:
-                context_z = None
-                mem_idx = int(semantic_result.get('memory_index', -1))
-                if 0 <= mem_idx < len(self.semantic_dynamics.crystals):
-                    context_z = self.semantic_dynamics.crystals[mem_idx].get('z')
-                
-                # V9: Передаємо trajectory context до семантичного read-out
-                if self.use_geodesic_context and self.geodesic_context is not None:
-                    geo_context = self.geodesic_context.get_trajectory_context()
+                # Передаємо trajectory context до семантичного read-out
+                if self.use_semantic_readout and self.semantic_readout is not None:
+                    context_z = None
+                    mem_idx = int(semantic_result.get('memory_index', -1))
+                    if 0 <= mem_idx < len(self.semantic_dynamics.crystals):
+                        context_z = self.semantic_dynamics.crystals[mem_idx].get('z')
+                    
                     # Додаємо геометричну інформацію до context_z
-                    if context_z is not None:
+                    if context_z is not None and ctx_vector is not None:
                         if len(context_z.shape) == 1 and len(context_z) > 0:
-                            context_z = context_z + 0.1 * geo_context[:len(context_z)]
-                
-                results['v10_semantic_readout'] = self.semantic_readout.observe_episode(
-                    self.substrate.raw_data,
-                    self.semantic_dynamics,
-                    context_z=context_z,
-                )
+                            ctx_len = min(len(context_z), len(ctx_vector))
+                            context_z = context_z + 0.1 * ctx_vector[:ctx_len]
+                    
+                    results['v10_semantic_readout'] = self.semantic_readout.observe_episode(
+                        self.substrate.raw_data,
+                        self.semantic_dynamics,
+                        context_z=context_z,
+                    )
 
         # === Variational ELBO ===
         if self.use_variational and self.variational is not None:
@@ -1125,27 +1133,21 @@ class BCSModelV6:
             if traj_summary['curvature_stats']['max'] > 0.3:
                 print(f"   ↰ ВИЯВЛЕНО КУТ (= зміна теми)")
         
-        # V9: Geodesic Context Engine summary — ПОВНА ЗАМІНА window-based context
-        if self.use_geodesic_context and self.geodesic_context is not None:
-            geo_summary = self.geodesic_context.get_summary()
-            results['geodesic_context_engine'] = geo_summary
+        # V10: HierarchicalTrajectory summary — PRIMARY CONTEXT
+        if self.hierarchical_trajectory is not None:
+            traj_summary = self.hierarchical_trajectory.get_summary()
+            results['hierarchical_trajectory_engine'] = traj_summary
             
-            if geo_summary:
-                n_points = geo_summary.get('n_points', 0)
-                geo_length = geo_summary.get('total_geodesic_length', 0.0)
-                shapes = geo_summary.get('semantic_shapes', {})
+            if traj_summary:
+                n_points = traj_summary.get('total_points', 0)
+                depth = traj_summary.get('depth', 0)
                 
-                print(f"🌀 GeodesicContextEngine: {n_points} точок, "
-                      f"довжина={geo_length:.2f}")
+                print(f"📊 HierarchicalTrajectory: {n_points} точок, depth={depth}")
                 
-                if shapes.get('n_loops', 0) > 0:
-                    print(f"   🔁 Петлі (повторення): {shapes['n_loops']}")
-                if shapes.get('n_angles', 0) > 0:
-                    print(f"   ↰ Кути (зміна теми): {shapes['n_angles']}")
-                if shapes.get('n_stops', 0) > 0:
-                    print(f"   ⏸ Зупинки (стабільний контекст): {shapes['n_stops']}")
-                if shapes.get('n_streams', 0) > 0:
-                    print(f"   → Потоки (плавний перехід): {shapes['n_streams']}")
+                for level_info in traj_summary.get('levels', []):
+                    lvl = level_info.get('level', 0)
+                    pts = level_info.get('n_points', 0)
+                    print(f"   L{lvl}: {pts} точок")
         
         self.results = results
         return results
